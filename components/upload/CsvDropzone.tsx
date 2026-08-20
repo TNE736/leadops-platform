@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { UploadCloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { UploadIllustration } from '@/components/illustrations/UploadIllustration';
 
 /**
  * Drop zone for adding CSV files to the upload queue. Selection alone never
@@ -69,9 +70,13 @@ export function CsvDropzone({
           e.target.value = '';
         }}
       />
-      <span className="relative flex h-14 w-14 items-center justify-center rounded-full border border-line bg-sunken backdrop-blur transition-transform duration-300 group-hover:scale-110">
-        <UploadCloud className="h-6 w-6 text-brand-ink" />
-      </span>
+      {queuedCount > 0 ? (
+        <span className="relative flex h-14 w-14 items-center justify-center rounded-full border border-line bg-sunken backdrop-blur transition-transform duration-300 group-hover:scale-110">
+          <UploadCloud className="h-6 w-6 text-brand-ink" />
+        </span>
+      ) : (
+        <UploadIllustration />
+      )}
       <p className="relative mt-2 text-base font-medium text-ink">
         {queuedCount > 0
           ? 'Drop more CSVs here, or click to add another'
