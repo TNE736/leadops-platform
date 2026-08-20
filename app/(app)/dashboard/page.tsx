@@ -1,13 +1,11 @@
 'use client';
 
 import { useMemo } from 'react';
-import Link from 'next/link';
 import {
   Users,
   Database,
   CheckCircle2,
   AlertTriangle,
-  ArrowRight,
   Activity,
   Gauge,
   Cpu,
@@ -180,15 +178,6 @@ export default function DashboardPage() {
           accent="#4338CA"
           icon={<Activity className="h-[18px] w-[18px]" />}
           flush
-          actions={
-            <Link
-              href="/event-timeline"
-              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-sunken px-3 py-1.5 text-xs font-medium text-brand-ink transition-colors hover:border-line-strong hover:bg-raised"
-            >
-              View all
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          }
           bodyClassName="border-t border-line-soft"
         >
           <EventFeed events={events.slice(0, 10)} />

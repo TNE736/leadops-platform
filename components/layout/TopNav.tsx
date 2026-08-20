@@ -4,12 +4,12 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ChevronDown, UploadCloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { NAV_GROUPS, FOOTER_NAV, findNavGroup, type NavItem } from '@/components/layout/nav';
+import { NAV_GROUPS, findNavGroup, type NavItem } from '@/components/layout/nav';
 import { useAGUIState } from '@/lib/ag-ui/provider';
 import { useCountUp } from '@/hooks/useCountUp';
 import { ConnectionIndicator } from '@/components/ui/ConnectionIndicator';
 
-const ALL_ITEMS: NavItem[] = [...NAV_GROUPS.flatMap((g) => g.items), ...FOOTER_NAV];
+const ALL_ITEMS: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
 // Same indigo → violet → fuchsia palette as the Home hero, hardcoded to
 // match it exactly rather than the app's separate cyan `brand` tokens.
@@ -18,14 +18,14 @@ const CTA_GRADIENT = 'linear-gradient(120deg,#4338CA,#7C3AED)';
 const ACTIVE_TEXT = 'text-accent-violet'; // accent.violet === #7C3AED
 
 /**
- * Replaces the old fixed left Sidebar. Styled to match the Home page: a
- * plain left-aligned row of links (not a bordered full-width bar), the same
- * indigo/violet/fuchsia gradient, and category pages "drill down" into a
- * hover dropdown of their own pages instead of a permanent second row.
+ * App chrome, styled to match the Home page: a plain left-aligned row of
+ * links (not a bordered full-width bar), the same indigo/violet/fuchsia
+ * gradient, and category pages "drill down" into a hover dropdown of their
+ * own pages instead of a permanent second row.
  */
 export function TopNav() {
   const pathname = usePathname();
-  const activeGroup = findNavGroup(pathname) ?? (pathname === '/settings' ? 'Settings' : undefined);
+  const activeGroup = findNavGroup(pathname);
   const { events } = useAGUIState();
   const total = useCountUp(events.length, 700);
 
@@ -91,22 +91,6 @@ export function TopNav() {
             );
           })}
 
-          {FOOTER_NAV.map((item) => {
-            const active = pathname === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? 'page' : undefined}
-                className={cn(
-                  'rounded-full px-3.5 py-2 text-sm font-semibold transition-colors',
-                  active ? ACTIVE_TEXT : 'text-ink-muted hover:text-ink'
-                )}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
         </nav>
 
         <div className="ml-auto flex shrink-0 items-center gap-3">

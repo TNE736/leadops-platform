@@ -2,17 +2,16 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Loader2, Send, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Loader2, Send, CheckCircle2 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Panel } from '@/components/ui/Panel';
 import { CsvDropzone } from '@/components/upload/CsvDropzone';
 import { CsvFileQueue, type QueuedFile } from '@/components/upload/CsvFileQueue';
 import { parseLeadsCsv } from '@/lib/ag-ui/csv';
 import { uploadCsvToGateway } from '@/lib/ag-ui/upload';
-import { getAGUIClient } from '@/lib/ag-ui/client';
 import { cn } from '@/lib/utils';
 
-type SendState = 'idle' | 'sending' | 'sent';
+type SendState = 'idle' | 'sending' | 'sent' | 'failed';
 
 const NEXT_STEPS = [
   'Lead Profile Agent scores each lead and checks eligibility.',
@@ -102,23 +101,14 @@ export default function UploadPage() {
       .filter((n): n is string => n !== null);
     setGatewayNotes(notes);
 
-    const leads = readyFiles.flatMap((item, fileIdx) =>
-      item
-        .parsed!.rows.filter((r) => r.valid)
-        .map((row, rowIdx) => ({
-          leadId: `csv_${Date.now().toString(36)}_${fileIdx}_${rowIdx}`,
-          name: row.name,
-          email: row.email,
-          company: row.company || undefined,
-        }))
-    );
+    const okFiles = readyFiles.filter((_, idx) => results[idx]!.ok);
+    const okIds = new Set(okFiles.map((f) => f.id));
 
-    getAGUIClient().ingestLeads(leads);
-
-    setSentCount(leads.length);
-    setSentFileCount(readyFiles.length);
-    setSendState('sent');
-    setQueue([]);
+    setSentCount(okFiles.reduce((sum, item) => sum + item.parsed!.validCount, 0));
+    setSentFileCount(okFiles.length);
+    setSendState(okFiles.length > 0 ? 'sent' : 'failed');
+    // Files the Gateway rejected stay queued so they can be retried.
+    setQueue((prev) => prev.filter((q) => !okIds.has(q.id)));
   }
 
   return (
@@ -149,6 +139,24 @@ export default function UploadPage() {
               description="Parsed locally in your browser. Not yet sent."
             >
               <CsvFileQueue queue={queue} onRemove={removeFile} disabled={sendState === 'sending'} />
+            </Panel>
+          )}
+
+          {sendState === 'failed' && (
+            <Panel tone="danger" className="animate-rise">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-status-failed" />
+                <div>
+                  <p className="text-sm font-medium text-ink">
+                    Upload failed — nothing reached the AG-UI Gateway
+                  </p>
+                  {gatewayNotes.map((note) => (
+                    <p key={note} className="mt-1 text-xs text-ink-muted">
+                      {note}
+                    </p>
+                  ))}
+                </div>
+              </div>
             </Panel>
           )}
 

@@ -1,8 +1,5 @@
 import Link from 'next/link';
 import { ArrowRight, UploadCloud } from 'lucide-react';
-import { AmbientBackground } from '@/components/home/AmbientBackground';
-import { PipelineDiagram } from '@/components/home/PipelineDiagram';
-
 /**
  * Standalone landing page. Deliberately outside the `(app)` route group —
  * no sidebar, no top bar, its own minimal header. This is the only thing at
@@ -11,8 +8,6 @@ import { PipelineDiagram } from '@/components/home/PipelineDiagram';
 export default function HomePage() {
   return (
     <div className="relative min-h-screen overflow-hidden bg-canvas">
-      <AmbientBackground />
-
       <header className="relative z-10 mx-auto flex max-w-[1440px] items-center justify-between px-6 py-5 sm:px-12">
         <div className="flex items-center gap-2.5">
           <span
@@ -46,7 +41,7 @@ export default function HomePage() {
         </Link>
       </header>
 
-      <section className="relative z-10 mx-auto grid max-w-[1440px] grid-cols-1 items-center gap-10 px-6 py-10 sm:px-12 lg:grid-cols-[1.05fr_0.95fr] lg:gap-14 lg:py-16">
+      <section className="relative z-10 mx-auto max-w-[1440px] px-6 py-10 sm:px-12 lg:py-16">
         <div>
           <div
             className="mb-6 inline-flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em]"
@@ -99,8 +94,6 @@ export default function HomePage() {
             </Link>
           </div>
         </div>
-
-        <PipelineDiagram />
       </section>
     </div>
   );

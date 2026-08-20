@@ -1,9 +1,8 @@
 /**
  * Forwards the raw CSV file to the AG-UI Gateway (proxied same-origin via
  * the `/api/ag-ui/*` rewrite in next.config.mjs), which is expected to hand
- * it to the CSV Processor Agent. This is best-effort: if no Gateway is
- * deployed yet, it fails silently and the caller falls back to local
- * `ingestLeads()` simulation so the UI still works end-to-end.
+ * it to the CSV Processor Agent. Failures are reported to the caller so the
+ * UI can surface them — nothing is simulated locally.
  */
 export async function uploadCsvToGateway(
   file: File
@@ -20,6 +19,6 @@ export async function uploadCsvToGateway(
     if (!res.ok) return { ok: false, reason: `Gateway responded ${res.status}` };
     return { ok: true };
   } catch {
-    return { ok: false, reason: 'No AG-UI Gateway reachable — showing local simulation instead.' };
+    return { ok: false, reason: 'No AG-UI Gateway reachable.' };
   }
 }
