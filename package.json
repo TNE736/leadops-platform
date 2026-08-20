@@ -1,0 +1,35 @@
+{
+  "name": "leadops-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LeadOps AI Platform \u2014 Next.js frontend (AG-UI), HubSpot-centric architecture (no Kafka/PubSub)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "14.2.35",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.400.0",
+    "zustand": "^4.5.4",
+    "date-fns": "^3.6.0",
+    "papaparse": "^5.4.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/papaparse": "^5.3.14",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.6",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.35"
+  }
+}
