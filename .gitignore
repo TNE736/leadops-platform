@@ -17,3 +17,5 @@ _to_delete/
 
 # Python build artifacts
 *.egg-info/
+Claude outputs/
+test-data/
