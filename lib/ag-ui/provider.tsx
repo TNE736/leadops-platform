@@ -23,6 +23,10 @@ function emptyStageCounts(): Record<PipelineStage, number> {
     'voice.completed': 0,
     'crm.updated': 0,
     'error.occurred': 0,
+    'blog.summary': 0,
+    'research.completed': 0,
+    'lead.context': 0,
+    'email.opened': 0,
   };
 }
 
@@ -55,7 +59,7 @@ export function AGUIProvider({ children }: { children: React.ReactNode }) {
     const stageCounts = emptyStageCounts();
     const activeLeadIds = new Set<string>();
     for (const evt of events) {
-      stageCounts[evt.type] += 1;
+      if (evt.type in stageCounts) stageCounts[evt.type] += 1;
       if (evt.leadId && evt.type !== 'crm.updated') activeLeadIds.add(evt.leadId);
     }
     return {

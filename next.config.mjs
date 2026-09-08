@@ -8,7 +8,7 @@ const nextConfig = {
     return [
       {
         source: '/api/ag-ui/:path*',
-        destination: `${process.env.AG_UI_GATEWAY_URL || 'http://localhost:4000'}/:path*`,
+        destination: `${process.env.LIVE_UPDATES_GATEWAY_URL || 'http://localhost:4000'}/:path*`,
       },
     ];
   },

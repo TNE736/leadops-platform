@@ -22,10 +22,8 @@ export function CsvDropzone({
   const handleFiles = useCallback(
     (fileList: FileList | null) => {
       if (!fileList) return;
-      const csvFiles = Array.from(fileList).filter(
-        (f) => f.name.toLowerCase().endsWith('.csv') || f.type === 'text/csv'
-      );
-      if (csvFiles.length > 0) onFiles(csvFiles);
+      const files = Array.from(fileList);
+      if (files.length > 0) onFiles(files);
     },
     [onFiles]
   );
@@ -62,7 +60,7 @@ export function CsvDropzone({
       <input
         ref={inputRef}
         type="file"
-        accept=".csv,text/csv"
+        accept=".csv,.xls,.xlsx,.json"
         multiple
         className="hidden"
         onChange={(e) => {
@@ -79,10 +77,10 @@ export function CsvDropzone({
       )}
       <p className="relative mt-2 text-base font-medium text-ink">
         {queuedCount > 0
-          ? 'Drop more CSVs here, or click to add another'
-          : 'Drop your Leads CSV here, or click to browse'}
+          ? 'Drop more files here, or click to add another'
+          : 'Drop your Leads file here, or click to browse'}
       </p>
-      <p className="relative text-xs text-ink-muted">CSV files only · parsed in your browser</p>
+      <p className="relative text-xs text-ink-muted">CSV, Excel or JSON · parsed in your browser</p>
     </div>
   );
 }

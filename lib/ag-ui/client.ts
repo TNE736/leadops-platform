@@ -132,8 +132,11 @@ let singleton: AGUIClient | null = null;
 export function getAGUIClient(): AGUIClient {
   if (!singleton) {
     singleton = new AGUIClient({
-      sseUrl: process.env.NEXT_PUBLIC_AG_UI_SSE_URL,
-      wsUrl: process.env.NEXT_PUBLIC_AG_UI_WS_URL,
+      // Connect straight to the gateway. Going through the Next.js
+      // /api/ag-ui rewrite buffers the SSE stream, so events never reach the
+      // browser live; a direct connection (with CORS on the gateway) fixes it.
+      sseUrl: process.env.NEXT_PUBLIC_LIVE_UPDATES_URL || 'http://localhost:4000/events',
+      wsUrl: process.env.NEXT_PUBLIC_LIVE_UPDATES_WS_URL,
     });
   }
   return singleton;

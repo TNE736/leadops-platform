@@ -1,114 +1,168 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { AlertTriangle, ArrowRight, Loader2, Send, CheckCircle2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  FileText,
+  Loader2,
+  MailOpen,
+  PhoneCall,
+  ScrollText,
+  Send,
+  Users,
+} from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Panel } from '@/components/ui/Panel';
 import { CsvDropzone } from '@/components/upload/CsvDropzone';
-import { CsvFileQueue, type QueuedFile } from '@/components/upload/CsvFileQueue';
-import { parseLeadsCsv } from '@/lib/ag-ui/csv';
-import { uploadCsvToGateway } from '@/lib/ag-ui/upload';
+import { useAGUIState } from '@/lib/ag-ui/provider';
 import { cn } from '@/lib/utils';
 
-type SendState = 'idle' | 'sending' | 'sent' | 'failed';
+/** Shape of the JSON the FastAPI service returns (mirrors schema.py's summary). */
+interface RowError {
+  file: string;
+  row: number | null;
+  key?: string;
+  issues: string[];
+}
 
-const NEXT_STEPS = [
-  'Lead Profile Agent scores each lead and checks eligibility.',
-  'Eligible Leads are upserted into HubSpot via MCP.',
-  'Email Agent reads the profile from HubSpot and sends via Mailgun.',
-  'Mailgun → HubSpot → webhook updates delivery status live.',
-  'On “opened”, the Gateway triggers the Voice Agent.',
+interface IngestSummary {
+  total: number;
+  valid: number;
+  skippedNonDecisionMaker: number;
+  skippedNotLead: number;
+  invalid: number;
+  forwarded: boolean;
+  targetUrl: string;
+  endpointResponse?: unknown;
+  forwardError?: string;
+  errors: RowError[];
+  errorsOmitted: number;
+}
+
+const REQUIRED_FILES = 3;
+const MAX_FILE_BYTES = 15 * 1024 * 1024;
+
+/** The five Live Metrics tiles, in the order a lead flows through them.
+ *  `key` matches the JSON returned by GET /metrics/hubspot; `wire` is the
+ *  HubSpot field the number is counted from (shown as the tile's caption). */
+const METRICS: {
+  key: 'leads' | 'blogSummary' | 'leadContext' | 'emailOpened' | 'voiceCompleted';
+  label: string;
+  wire: string;
+  icon: typeof Users;
+  chip: string; // icon chip background
+  tint: string; // number colour
+}[] = [
+  { key: 'leads', label: 'Leads', wire: 'contact.creation', icon: Users, chip: 'bg-[#efeaff] text-[#7c3aed]', tint: 'text-[#6d28d9]' },
+  { key: 'blogSummary', label: 'Blog Summary', wire: 'ticket.blog_summary', icon: FileText, chip: 'bg-[#e7f0ff] text-[#2563eb]', tint: 'text-[#1d4ed8]' },
+  { key: 'leadContext', label: 'Lead Context', wire: 'lead_context', icon: ScrollText, chip: 'bg-[#eafaf1] text-[#16a34a]', tint: 'text-[#15803d]' },
+  { key: 'emailOpened', label: 'Email Opened', wire: 'email_status=OPENED', icon: MailOpen, chip: 'bg-[#fff2e6] text-[#ea7317]', tint: 'text-[#c2570c]' },
+  { key: 'voiceCompleted', label: 'Voice Completed', wire: 'voice_status=COMPLETED', icon: PhoneCall, chip: 'bg-[#fdeaf6] text-[#c026d3]', tint: 'text-[#a21caf]' },
 ];
 
-function makeQueueId(file: File) {
-  return `${file.name}-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+interface QueuedCsv {
+  id: string;
+  file: File;
+  rows: number | null;
+  error: string | null;
 }
 
 export default function UploadPage() {
-  const router = useRouter();
-  const [queue, setQueue] = useState<QueuedFile[]>([]);
-  const [sendState, setSendState] = useState<SendState>('idle');
-  const [gatewayNotes, setGatewayNotes] = useState<string[]>([]);
-  const [sentCount, setSentCount] = useState(0);
-  const [sentFileCount, setSentFileCount] = useState(0);
+  const [queue, setQueue] = useState<QueuedCsv[]>([]);
+  const [sending, setSending] = useState(false);
+  const [summary, setSummary] = useState<IngestSummary | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  // Real HubSpot totals for the tiles. Fetched on load, then re-fetched
+  // whenever a change arrives over the live stream (lastEventAt changes).
+  const { lastEventAt } = useAGUIState();
+  const [metrics, setMetrics] = useState<Record<string, number> | null>(null);
 
-  // Adding files only parses them for preview — it never contacts the Gateway
-  // or the Lead Profile Agent. That happens only in handleUpload.
+  useEffect(() => {
+    const url = `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/metrics/hubspot`;
+    fetch(url)
+      .then((r) => r.json())
+      .then((data) => setMetrics(data))
+      .catch(() => {});
+  }, [lastEventAt]);
+
   function addFiles(files: File[]) {
-    setSendState('idle');
-    setGatewayNotes([]);
-
-    const entries: QueuedFile[] = files.map((file) => ({
-      id: makeQueueId(file),
+    setSummary(null);
+    setRequestError(null);
+    const entries: QueuedCsv[] = files.map((file) => ({
+      id: `${file.name}-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       file,
-      parsed: null,
+      rows: null,
       error: null,
-      parsing: true,
     }));
     setQueue((prev) => [...prev, ...entries]);
 
     entries.forEach(async (entry) => {
       try {
-        const result = await parseLeadsCsv(entry.file);
-        setQueue((prev) =>
-          prev.map((q) => (q.id === entry.id ? { ...q, parsed: result, parsing: false } : q))
-        );
-      } catch {
-        setQueue((prev) =>
-          prev.map((q) =>
-            q.id === entry.id
-              ? {
-                  ...q,
-                  error: 'Could not parse this file. Make sure it is a valid CSV.',
-                  parsing: false,
-                }
-              : q
-          )
-        );
+        const name = entry.file.name.toLowerCase();
+        const ext = name.includes('.') ? name.slice(name.lastIndexOf('.')) : '(no extension)';
+        let rows: number;
+
+        if (entry.file.size > MAX_FILE_BYTES) throw new Error('File too large — max 15 MB');
+
+        if (name.endsWith('.json')) {
+          const data = JSON.parse(await entry.file.text());
+          rows = (Array.isArray(data) ? data : data.records ?? []).length;
+        } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+          const wb = XLSX.read(await entry.file.arrayBuffer());
+          const sheetName = wb.SheetNames[0];
+          if (!sheetName) throw new Error('Empty Excel file');
+          rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName]!).length;
+        } else if (name.endsWith('.csv')) {
+          const parsed = Papa.parse(await entry.file.text(), { header: true, skipEmptyLines: 'greedy' });
+          if (!parsed.meta.fields?.length) throw new Error('Not a readable CSV');
+          rows = parsed.data.length;
+        } else {
+          throw new Error(`${ext} format is not supported`);
+        }
+
+        setQueue((prev) => prev.map((q) => (q.id === entry.id ? { ...q, rows } : q)));
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Unreadable file';
+        setQueue((prev) => prev.map((q) => (q.id === entry.id ? { ...q, error: message } : q)));
       }
     });
   }
 
-  function removeFile(id: string) {
-    setQueue((prev) => prev.filter((q) => q.id !== id));
-  }
+  const parsing = queue.some((q) => q.rows === null && !q.error);
+  const ready = queue.length === REQUIRED_FILES && !parsing && queue.every((q) => !q.error);
 
-  const totals = useMemo(() => {
-    let rows = 0;
-    let valid = 0;
-    let invalid = 0;
-    for (const item of queue) {
-      if (!item.parsed) continue;
-      rows += item.parsed.rows.length;
-      valid += item.parsed.validCount;
-      invalid += item.parsed.invalidCount;
-    }
-    return { rows, valid, invalid };
-  }, [queue]);
-
-  const readyFiles = queue.filter((q) => q.parsed && q.parsed.validCount > 0);
-  const stillParsing = queue.some((q) => q.parsing);
-  const disabled = totals.valid === 0 || sendState === 'sending' || stillParsing;
+  // Number the downstream agent confirmed it pushed (falls back to the count we forwarded).
+  const pushed =
+    summary?.endpointResponse && typeof summary.endpointResponse === 'object'
+      ? (summary.endpointResponse as { counts?: { pushed?: number } }).counts?.pushed
+      : undefined;
 
   async function handleUpload() {
-    if (readyFiles.length === 0 || sendState === 'sending') return;
-    setSendState('sending');
+    if (!ready || sending) return;
+    setSending(true);
+    setSummary(null);
+    setRequestError(null);
 
-    const results = await Promise.all(readyFiles.map((item) => uploadCsvToGateway(item.file)));
-    const notes = results
-      .map((r, idx) => (!r.ok ? `${readyFiles[idx]!.file.name}: ${r.reason}` : null))
-      .filter((n): n is string => n !== null);
-    setGatewayNotes(notes);
+    const formData = new FormData();
+    queue.forEach((q) => formData.append('files', q.file));
 
-    const okFiles = readyFiles.filter((_, idx) => results[idx]!.ok);
-    const okIds = new Set(okFiles.map((f) => f.id));
-
-    setSentCount(okFiles.reduce((sum, item) => sum + item.parsed!.validCount, 0));
-    setSentFileCount(okFiles.length);
-    setSendState(okFiles.length > 0 ? 'sent' : 'failed');
-    // Files the Gateway rejected stay queued so they can be retried.
-    setQueue((prev) => prev.filter((q) => !okIds.has(q.id)));
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/leads/ingest`,
+        { method: 'POST', body: formData }
+      );
+      const body = await res.json();
+      if ('total' in body) setSummary(body as IngestSummary);
+      else setRequestError(body.error ?? `Server responded ${res.status}`);
+    } catch {
+      setRequestError('Could not reach the ingest API.');
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
@@ -117,145 +171,177 @@ export default function UploadPage() {
         eyebrow="Ingestion"
         title="Upload Leads"
         titleFont="font-upload"
-        description="Queue one or more Leads CSVs. Nothing is sent to the Lead Profile Agent until you click Upload."
       />
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_360px]">
-        <div className="space-y-5">
-          <Panel
-            className="animate-rise"
-            eyebrow="Source"
-            title="Leads CSV"
-            description="Expected columns: name, email, company. Aliases like “full name” and “organization” are recognised too."
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <Panel
+          className="animate-rise"
+          eyebrow="Source"
+        >
+          <CsvDropzone onFiles={addFiles} queuedCount={queue.length} />
+        </Panel>
+
+        <Panel className="animate-rise" eyebrow="Summary" title="Import status">
+          <dl className="space-y-3">
+            {[
+              ['Files queued', `${queue.length} / ${REQUIRED_FILES}`, 'text-ink'],
+              ['Employees seen', summary ? summary.total : '—', 'text-ink'],
+              [
+                'Employees pushed',
+                summary ? (pushed ?? summary.valid) : '—',
+                'text-status-success',
+              ],
+              [
+                'Invalid',
+                summary ? summary.invalid : '—',
+                summary && summary.invalid > 0 ? 'text-status-failed' : 'text-ink-faint',
+              ],
+            ].map(([label, value, tone]) => (
+              <div key={String(label)} className="flex items-center justify-between text-sm">
+                <dt className="text-ink-muted">{label}</dt>
+                <dd className={cn('text-lg font-semibold tabular-nums', tone as string)}>
+                  {value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+
+          <button
+            onClick={handleUpload}
+            disabled={!ready || sending}
+            className={cn(
+              'mt-6 flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition-all duration-200',
+              !ready || sending
+                ? 'cursor-not-allowed border border-line-soft bg-sunken text-ink-faint'
+                : 'bg-brand-gradient text-onBrand shadow-glow-brand hover:scale-[1.02]'
+            )}
           >
-            <CsvDropzone onFiles={addFiles} queuedCount={queue.length} />
-          </Panel>
-
-          {queue.length > 0 && (
-            <Panel
-              className="animate-rise"
-              eyebrow="Queue"
-              title={`${queue.length} file${queue.length === 1 ? '' : 's'} queued`}
-              description="Parsed locally in your browser. Not yet sent."
-            >
-              <CsvFileQueue queue={queue} onRemove={removeFile} disabled={sendState === 'sending'} />
-            </Panel>
-          )}
-
-          {sendState === 'failed' && (
-            <Panel tone="danger" className="animate-rise">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-status-failed" />
-                <div>
-                  <p className="text-sm font-medium text-ink">
-                    Upload failed — nothing reached the AG-UI Gateway
-                  </p>
-                  {gatewayNotes.map((note) => (
-                    <p key={note} className="mt-1 text-xs text-ink-muted">
-                      {note}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            </Panel>
-          )}
-
-          {sendState === 'sent' && (
-            <Panel tone="success" className="animate-rise">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-start gap-3">
-                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-status-success" />
-                  <div>
-                    <p className="text-sm font-medium text-ink">
-                      {sentCount} lead{sentCount === 1 ? '' : 's'} from {sentFileCount} file
-                      {sentFileCount === 1 ? '' : 's'} sent to the Lead Profile Agent
-                    </p>
-                    {gatewayNotes.map((note) => (
-                      <p key={note} className="mt-1 text-xs text-ink-muted">
-                        {note}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-                <button
-                  onClick={() => router.push('/lead-journey')}
-                  className="inline-flex shrink-0 items-center gap-2 rounded-full border border-line bg-sunken px-4 py-2 text-xs font-medium text-ink transition-colors hover:border-line-strong hover:bg-raised"
-                >
-                  View lead journey
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </Panel>
-          )}
-        </div>
-
-        <div className="space-y-5">
-          <Panel className="animate-rise" eyebrow="Summary" title="Import status">
-            <dl className="space-y-3">
-              {[
-                ['Files queued', queue.length, 'text-ink'],
-                ['Total rows', totals.rows, 'text-ink'],
-                ['Valid', totals.valid, 'text-status-success'],
-                [
-                  'Invalid',
-                  totals.invalid,
-                  totals.invalid > 0 ? 'text-status-failed' : 'text-ink-faint',
-                ],
-              ].map(([label, value, tone]) => (
-                <div key={String(label)} className="flex items-center justify-between text-sm">
-                  <dt className="text-ink-muted">{label}</dt>
-                  <dd className={cn('text-lg font-semibold tabular-nums', tone as string)}>
-                    {value}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-
-            <button
-              onClick={handleUpload}
-              disabled={disabled}
-              className={cn(
-                'mt-6 flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition-all duration-200',
-                disabled
-                  ? 'cursor-not-allowed border border-line-soft bg-sunken text-ink-faint'
-                  : 'bg-brand-gradient text-onBrand shadow-glow-brand hover:scale-[1.02]'
-              )}
-            >
-              {sendState === 'sending' ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Uploading…
-                </>
-              ) : stillParsing ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Parsing files…
-                </>
-              ) : (
-                <>
-                  <Send className="h-4 w-4" />
-                  Upload {totals.valid || ''} Lead{totals.valid === 1 ? '' : 's'}
-                </>
-              )}
-            </button>
-            <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-              Rows with a missing or malformed email are skipped automatically. The Lead Profile
-              Agent is invoked once, when you click Upload.
-            </p>
-          </Panel>
-
-          <Panel className="animate-rise" eyebrow="Pipeline" title="What happens next">
-            <ol className="space-y-3">
-              {NEXT_STEPS.map((step, idx) => (
-                <li key={step} className="flex gap-3">
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line bg-sunken text-[10px] font-semibold tabular-nums text-brand-ink">
-                    {idx + 1}
-                  </span>
-                  <span className="text-xs leading-relaxed text-ink-secondary">{step}</span>
-                </li>
-              ))}
-            </ol>
-          </Panel>
-        </div>
+            {sending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Processing…
+              </>
+            ) : parsing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Parsing files…
+              </>
+            ) : (
+              <>
+                <Send className="h-4 w-4" />
+                {queue.length === REQUIRED_FILES
+                  ? 'Process & Forward'
+                  : `Add more file`}
+              </>
+            )}
+          </button>
+        </Panel>
       </div>
+
+      {requestError && (
+        <Panel tone="danger" className="mt-5 animate-rise">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-status-failed" />
+            <div>
+              <p className="text-sm font-medium text-ink">Ingestion failed</p>
+              <p className="mt-1 text-xs text-ink-muted">{requestError}</p>
+            </div>
+          </div>
+        </Panel>
+      )}
+
+      {summary && (summary.errors.length > 0 || !!summary.forwardError) && (
+        <Panel
+          tone="danger"
+          className="mt-5 animate-rise"
+          eyebrow="Result"
+          title={
+            summary.valid === 0
+              ? summary.skippedNonDecisionMaker + summary.skippedNotLead > 0
+                ? 'No eligible leads to forward'
+                : 'No records passed validation'
+              : 'Validated, but forwarding failed'
+          }
+        >
+          {summary.forwardError && (
+            <p className="mb-3 text-xs text-status-failed">{summary.forwardError}</p>
+          )}
+
+          {summary.errors.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-line">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-line-soft text-[11px] uppercase tracking-[0.12em] text-ink-faint">
+                    <th scope="col" className="px-4 py-2.5 font-semibold">File</th>
+                    <th scope="col" className="px-4 py-2.5 font-semibold">Row</th>
+                    <th scope="col" className="px-4 py-2.5 font-semibold">Key</th>
+                    <th scope="col" className="px-4 py-2.5 font-semibold">Issues</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line-soft">
+                  {summary.errors.map((err, i) => (
+                    <tr key={i} className="transition-colors hover:bg-raised">
+                      <td className="px-4 py-2.5 text-ink-secondary">{err.file}</td>
+                      <td className="px-4 py-2.5 tabular-nums text-ink-faint">{err.row ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-ink-secondary">{err.key ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-status-failed">{err.issues.join('; ')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {summary.errorsOmitted > 0 && (
+                <p className="border-t border-line-soft px-4 py-2.5 text-[11px] text-ink-muted">
+                  +{summary.errorsOmitted} more error{summary.errorsOmitted === 1 ? '' : 's'} not shown
+                </p>
+              )}
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {summary?.forwarded && summary.errors.length === 0 && (
+        <Panel tone="success" className="mt-5 animate-rise">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-status-success" />
+            <p className="text-sm text-ink">
+              {pushed ?? summary.valid} lead{(pushed ?? summary.valid) === 1 ? '' : 's'} pushed to the endpoint.
+            </p>
+          </div>
+        </Panel>
+      )}
+
+      <Panel
+        className="mt-5 animate-rise"
+        eyebrow="Live metrics"
+        title="Pipeline snapshot"
+        description="Live counts update as each stage carries traffic."
+        accent="#7c3aed"
+        icon={<Activity className="h-[18px] w-[18px]" />}
+      >
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+          {METRICS.map((m) => {
+            const Icon = m.icon;
+            return (
+              <div
+                key={m.key}
+                className="rounded-2xl border border-line-soft bg-raised p-4"
+              >
+                <span
+                  className={cn(
+                    'mb-3 inline-flex h-8 w-8 items-center justify-center rounded-lg',
+                    m.chip
+                  )}
+                >
+                  <Icon className="h-[18px] w-[18px]" />
+                </span>
+                <div className={cn('text-3xl font-extrabold leading-none tabular-nums', m.tint)}>
+                  {metrics?.[m.key] ?? 0}
+                </div>
+                <div className="mt-2 text-[13px] font-semibold text-ink">{m.label}</div>
+                <div className="mt-0.5 font-mono text-[11px] text-ink-faint">{m.wire}</div>
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
     </>
   );
 }

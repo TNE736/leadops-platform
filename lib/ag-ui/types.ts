@@ -22,7 +22,12 @@ export type PipelineStage =
   | 'voice.trigger.requested'
   | 'voice.completed'
   | 'crm.updated'
-  | 'error.occurred';
+  | 'error.occurred'
+  // New pipeline taxonomy (Blog Summary → Research → Lead Context → Email → Voice)
+  | 'blog.summary'
+  | 'research.completed'
+  | 'lead.context'
+  | 'email.opened';
 
 /** Matches the Event Status Legend on the architecture poster. */
 export type EventStatus = 'success' | 'running' | 'triggered' | 'waiting' | 'failed';
@@ -99,6 +104,26 @@ export interface ErrorOccurredEvent extends AGUIEventBase {
   payload: { message: string; stage: PipelineStage; detail?: string };
 }
 
+export interface BlogSummaryEvent extends AGUIEventBase {
+  type: 'blog.summary';
+  payload?: { summary?: string };
+}
+
+export interface ResearchCompletedEvent extends AGUIEventBase {
+  type: 'research.completed';
+  payload?: Record<string, unknown>;
+}
+
+export interface LeadContextEvent extends AGUIEventBase {
+  type: 'lead.context';
+  payload?: { context?: string };
+}
+
+export interface EmailOpenedEvent extends AGUIEventBase {
+  type: 'email.opened';
+  payload?: { messageId?: string };
+}
+
 export type AGUIEvent =
   | LeadCreatedEvent
   | LeadEligibilityCheckedEvent
@@ -108,7 +133,11 @@ export type AGUIEvent =
   | VoiceTriggerRequestedEvent
   | VoiceCompletedEvent
   | CrmUpdatedEvent
-  | ErrorOccurredEvent;
+  | ErrorOccurredEvent
+  | BlogSummaryEvent
+  | ResearchCompletedEvent
+  | LeadContextEvent
+  | EmailOpenedEvent;
 
 /** Connection state for the Real-time Updates (SSE / WebSocket) channel. */
 export type ConnectionState = 'connecting' | 'open' | 'closed' | 'error';
@@ -143,7 +172,34 @@ export const STAGE_LABELS: Record<PipelineStage, string> = {
   'voice.completed': 'Call outcome captured',
   'crm.updated': 'HubSpot updated with results',
   'error.occurred': 'Pipeline error',
+  'blog.summary': 'Blog Summary generated',
+  'research.completed': 'Research Agent enriched',
+  'lead.context': 'Lead Context ready',
+  'email.opened': 'Email opened',
 };
+
+/**
+ * The Lead Journey stage sequence (new taxonomy).
+ * Milestones carry an `event` that marks them reached; relay hops (the Gateway)
+ * light up once the preceding milestone has been reached.
+ */
+export interface JourneyStage {
+  key: string;
+  label: string;
+  kind: 'milestone' | 'relay';
+  event?: PipelineStage;
+}
+
+export const LEAD_JOURNEY: JourneyStage[] = [
+  { key: 'blog.summary', label: 'Blog Summary generated', kind: 'milestone', event: 'blog.summary' },
+  { key: 'gw1', label: 'Gateway · relayed', kind: 'relay' },
+  { key: 'research.completed', label: 'Research Agent enriched', kind: 'milestone', event: 'research.completed' },
+  { key: 'lead.context', label: 'Lead Context ready', kind: 'milestone', event: 'lead.context' },
+  { key: 'gw2', label: 'Gateway · relay', kind: 'relay' },
+  { key: 'email.sent', label: 'Email Agent sent', kind: 'milestone', event: 'email.sent' },
+  { key: 'gw3', label: 'Gateway · relay', kind: 'relay' },
+  { key: 'voice.completed', label: 'Voice Agent completed', kind: 'milestone', event: 'voice.completed' },
+];
 
 /** Human-readable names for each publisher, used in feeds and trace headers. */
 export const SOURCE_LABELS: Record<EventSource, string> = {

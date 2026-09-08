@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Users,
   Database,
@@ -9,12 +9,10 @@ import {
   Activity,
   Gauge,
   Cpu,
-  Radio,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Panel } from '@/components/ui/Panel';
 import { StatCard } from '@/components/dashboard/StatCard';
-import { EventPipeline } from '@/components/dashboard/EventPipeline';
 import { EventFeed } from '@/components/events/EventFeed';
 import { AreaChart } from '@/components/charts/AreaChart';
 import { RadialMeter } from '@/components/charts/RadialMeter';
@@ -49,8 +47,21 @@ const WORKERS: Array<{ source: EventSource; accent: string }> = [
 ];
 
 export default function DashboardPage() {
-  const { events, activeLeads, stageCounts } = useAGUIState();
+  const { events, activeLeads, stageCounts, lastEventAt } = useAGUIState();
   const failed = events.filter((e) => e.status === 'failed').length;
+
+  // Real totals from HubSpot (all leads already in the system, not just this
+  // session's live events). Fetched on load and refreshed whenever a change
+  // arrives over the stream. The throughput chart, feed and worker load below
+  // stay purely live — this only backs the top KPIs and the conversion ring.
+  const [metrics, setMetrics] = useState<Record<string, number> | null>(null);
+  useEffect(() => {
+    const url = `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/metrics/hubspot`;
+    fetch(url)
+      .then((r) => r.json())
+      .then((d) => setMetrics(d))
+      .catch(() => {});
+  }, [lastEventAt]);
 
   const series = useMemo(
     () => ({
@@ -65,6 +76,12 @@ export default function DashboardPage() {
   const lastMinute = series.all.slice(-6).reduce((a, b) => a + b, 0);
   const created = stageCounts['lead.created'];
   const completed = stageCounts['crm.updated'];
+
+  // Prefer the HubSpot totals; fall back to live-stream counts until they load.
+  const hsLeads = metrics?.leads ?? activeLeads;
+  const hsContacts = metrics?.leads ?? stageCounts['crm.contact.upserted'];
+  const hsCompleted = metrics?.voiceCompleted ?? completed;
+  const convTotal = metrics?.leads ?? created;
 
   const workerRows = useMemo(
     () =>
@@ -89,8 +106,8 @@ export default function DashboardPage() {
       <div className="stagger grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Active Leads"
-          value={activeLeads}
-          hint="Currently in the pipeline"
+          value={hsLeads}
+          hint="Leads in HubSpot"
           icon={Users}
           accent="#7C3AED"
           series={series.all}
@@ -98,7 +115,7 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Contacts in HubSpot"
-          value={stageCounts['crm.contact.upserted']}
+          value={hsContacts}
           hint="Upserted via MCP"
           icon={Database}
           accent="#4338CA"
@@ -106,8 +123,8 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Completed"
-          value={completed}
-          hint="Reached end of pipeline"
+          value={hsCompleted}
+          hint="Voice call completed"
           icon={CheckCircle2}
           accent="#059669"
           series={series.done}
@@ -138,35 +155,21 @@ export default function DashboardPage() {
         <Panel
           className="animate-rise"
           eyebrow="Conversion"
-          title="Reached CRM update"
+          title="Reached voice completion"
           accent="#059669"
           icon={<Gauge className="h-[18px] w-[18px]" />}
         >
           <div className="flex flex-col items-center py-2">
             <RadialMeter
-              value={completed}
-              max={Math.max(1, created)}
+              value={hsCompleted}
+              max={Math.max(1, convTotal)}
               label="converted"
               color="#059669"
-              sublabel={`${completed} of ${created} Leads created in this window reached crm.updated`}
+              sublabel={`${hsCompleted} of ${convTotal} leads reached voice completion`}
             />
           </div>
         </Panel>
       </div>
-
-      {/* Flow */}
-      <Panel
-        className="mt-5 animate-rise"
-        eyebrow="Live flow"
-        title="Lead pipeline"
-        description="Nodes light up once a stage carries traffic; packets travel a connector while Leads are moving across it."
-        accent="#4338CA"
-        icon={<Radio className="h-[18px] w-[18px]" />}
-        flush
-        bodyClassName="border-t border-line-soft"
-      >
-        <EventPipeline />
-      </Panel>
 
       {/* Feed + workers */}
       <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-3">
