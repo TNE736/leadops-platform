@@ -1,31 +1,31 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Radio, Search } from 'lucide-react';
+import { Check, Search } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Panel } from '@/components/ui/Panel';
 import { useAGUIState } from '@/lib/ag-ui/provider';
 import { LEAD_JOURNEY } from '@/lib/ag-ui/types';
 import { cn } from '@/lib/utils';
 
-const MILESTONES = LEAD_JOURNEY.filter((s) => s.kind === 'milestone');
-
-/** One HubSpot lead and how far it has progressed (from GET /leads/hubspot). */
-interface HubspotLead {
+/** One consultant and how far they have progressed (from GET /consultants/journey). */
+interface ConsultantJourney {
   leadId: string;
   label: string;
+  stage: string;
+  closed: boolean;
   reached: Record<string, boolean>;
 }
 
 export default function LeadJourneyPage() {
   // Re-fetch on load and whenever a change arrives over the live stream.
   const { lastEventAt } = useAGUIState();
-  const [leads, setLeads] = useState<HubspotLead[]>([]);
+  const [leads, setLeads] = useState<ConsultantJourney[]>([]);
   const [selectedLead, setSelectedLead] = useState<string | null>(null);
   const [query, setQuery] = useState('');
 
   useEffect(() => {
-    const url = `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/leads/hubspot`;
+    const url = `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000'}/consultants/journey`;
     fetch(url)
       .then((r) => r.json())
       .then((data) => setLeads(Array.isArray(data) ? data : []))
@@ -49,20 +49,8 @@ export default function LeadJourneyPage() {
     active ? Object.entries(active.reached).filter(([, v]) => v).map(([k]) => k) : []
   );
 
-  // A milestone is reached when HubSpot says so; a relay hop lights up once the
-  // milestone immediately before it in the sequence is reached.
-  const isReached = (idx: number): boolean => {
-    const stage = LEAD_JOURNEY[idx]!;
-    if (stage.kind === 'milestone') return !!stage.event && reachedStages.has(stage.event);
-    for (let i = idx - 1; i >= 0; i--) {
-      const prev = LEAD_JOURNEY[i]!;
-      if (prev.kind === 'milestone') return !!prev.event && reachedStages.has(prev.event);
-    }
-    return false;
-  };
-
-  const progress = MILESTONES.filter((s) => s.event && reachedStages.has(s.event)).length;
-  const pct = Math.round((progress / MILESTONES.length) * 100);
+  const progress = LEAD_JOURNEY.filter((s) => reachedStages.has(s.key)).length;
+  const pct = Math.round((progress / LEAD_JOURNEY.length) * 100);
 
   return (
     <>
@@ -70,14 +58,14 @@ export default function LeadJourneyPage() {
         eyebrow="Trace"
         title="Lead journey"
         titleFont="font-journey"
-        description="Select a lead to see how far it has progressed through Blog Summary → Gateway → Research Agent → Lead Context → Gateway → Email Agent → Gateway → Voice Agent."
+        description="Select a consultant to see how far they have progressed through Loaded → Emailed → Engaged → Researched → Followed up → Qualified → Handed off."
       />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[300px_1fr]">
         <Panel
           className="animate-rise"
-          eyebrow="Leads"
-          title={`${leadIds.length} in HubSpot`}
+          eyebrow="Consultants"
+          title={`${leadIds.length} in MongoDB`}
           flush
           bodyClassName="border-t border-line-soft"
         >
@@ -91,8 +79,8 @@ export default function LeadJourneyPage() {
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search leads…"
-                aria-label="Search leads"
+                placeholder="Search consultants…"
+                aria-label="Search consultants"
                 className="w-full rounded-xl border border-line-soft bg-sunken py-2 pl-9 pr-3 text-xs text-ink placeholder:text-ink-faint focus:border-line focus:outline-none focus:ring-2 focus:ring-brand/25"
               />
             </div>
@@ -101,11 +89,11 @@ export default function LeadJourneyPage() {
           <div className="max-h-[560px] overflow-y-auto p-2.5">
             {leadIds.length === 0 ? (
               <p className="px-3 py-8 text-center text-sm text-ink-muted">
-                No leads in HubSpot yet.
+                No consultants in MongoDB yet.
               </p>
             ) : filtered.length === 0 ? (
               <p className="px-3 py-8 text-center text-sm text-ink-muted">
-                No leads match “{query.trim()}”.
+                No consultants match “{query.trim()}”.
               </p>
             ) : (
               <ul className="space-y-1">
@@ -140,7 +128,13 @@ export default function LeadJourneyPage() {
           className="animate-rise"
           eyebrow="Journey"
           title={active?.label ?? activeLead ?? 'No lead selected'}
-          description={activeLead ? `${progress} of ${MILESTONES.length} stages complete` : undefined}
+          description={
+            active
+              ? active.closed
+                ? `Closed as “${active.stage}”`
+                : `${progress} of ${LEAD_JOURNEY.length} stages complete`
+              : undefined
+          }
           actions={
             activeLead ? (
               <div className="flex items-center gap-3">
@@ -157,14 +151,13 @@ export default function LeadJourneyPage() {
         >
           {!activeLead ? (
             <p className="py-10 text-center text-sm text-ink-muted">
-              Pick a lead on the left to see its journey.
+              Pick a consultant on the left to see their journey.
             </p>
           ) : (
             <ol className="relative space-y-6">
               {LEAD_JOURNEY.map((stage, idx) => {
-                const reached = isReached(idx);
+                const reached = reachedStages.has(stage.key);
                 const isLast = idx === LEAD_JOURNEY.length - 1;
-                const relay = stage.kind === 'relay';
                 return (
                   <li key={stage.key} className="relative flex gap-4">
                     {!isLast && (
@@ -178,20 +171,13 @@ export default function LeadJourneyPage() {
                     )}
                     <span
                       className={cn(
-                        'relative z-10 flex shrink-0 items-center justify-center rounded-full border transition-all',
-                        relay ? 'h-[21px] w-[21px]' : 'h-[27px] w-[27px]',
+                        'relative z-10 flex h-[27px] w-[27px] shrink-0 items-center justify-center rounded-full border transition-all',
                         reached
-                          ? relay
-                            ? 'border-dashed border-brand/50 bg-brand/10 text-brand'
-                            : 'border-transparent bg-brand-gradient text-onBrand shadow-glow-brand'
-                          : relay
-                            ? 'border-dashed border-line-strong bg-sunken text-ink-faint'
-                            : 'border-line bg-sunken text-ink-faint'
+                          ? 'border-transparent bg-brand-gradient text-onBrand shadow-glow-brand'
+                          : 'border-line bg-sunken text-ink-faint'
                       )}
                     >
-                      {relay ? (
-                        <Radio className="h-3 w-3" aria-hidden />
-                      ) : reached ? (
+                      {reached ? (
                         <Check className="h-3.5 w-3.5" aria-hidden />
                       ) : (
                         <span className="h-1.5 w-1.5 rounded-full bg-line-strong" aria-hidden />
@@ -202,17 +188,15 @@ export default function LeadJourneyPage() {
                       <div className="min-w-0">
                         <p
                           className={cn(
-                            relay ? 'text-[13px] font-medium' : 'text-sm font-medium',
-                            reached ? (relay ? 'text-ink-muted' : 'text-ink') : 'text-ink-faint'
+                            'text-sm font-medium',
+                            reached ? 'text-ink' : 'text-ink-faint'
                           )}
                         >
                           {stage.label}
                         </p>
-                        <p className="mt-0.5 font-mono text-[11px] text-ink-faint">
-                          {relay ? 'gateway.relay' : stage.event}
-                        </p>
+                        <p className="mt-0.5 font-mono text-[11px] text-ink-faint">{stage.key}</p>
                       </div>
-                      {reached && !relay && (
+                      {reached && (
                         <span className="shrink-0 rounded-full bg-status-success/12 px-2.5 py-1 text-[11px] font-semibold text-status-success">
                           Reached
                         </span>

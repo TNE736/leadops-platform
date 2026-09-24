@@ -1,24 +1,24 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import {
   Activity,
   AlertTriangle,
+  BadgeCheck,
   CheckCircle2,
-  FileText,
   Loader2,
-  MailOpen,
-  PhoneCall,
-  ScrollText,
+  MailCheck,
+  MessageSquareReply,
   Send,
+  UserCheck,
   Users,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Panel } from '@/components/ui/Panel';
 import { CsvDropzone } from '@/components/upload/CsvDropzone';
-import { useAGUIState } from '@/lib/ag-ui/provider';
+import { useConsultantMetrics, type ConsultantMetrics } from '@/hooks/useConsultantMetrics';
 import { cn } from '@/lib/utils';
 
 /** Shape of the JSON the FastAPI service returns (mirrors schema.py's summary). */
@@ -30,38 +30,39 @@ interface RowError {
 }
 
 interface IngestSummary {
+  kind?: 'consultants';
   total: number;
   valid: number;
   skippedNonDecisionMaker: number;
   skippedNotLead: number;
+  skippedDuplicate?: number;
   invalid: number;
-  forwarded: boolean;
-  targetUrl: string;
-  endpointResponse?: unknown;
-  forwardError?: string;
+  inserted: boolean;
+  insertedCount?: number;
+  dbError?: string;
   errors: RowError[];
   errorsOmitted: number;
 }
 
-const REQUIRED_FILES = 3;
+ const MIN_FILES = 1;
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
 
-/** The five Live Metrics tiles, in the order a lead flows through them.
- *  `key` matches the JSON returned by GET /metrics/hubspot; `wire` is the
- *  HubSpot field the number is counted from (shown as the tile's caption). */
+/** The five Live Metrics tiles, in the order a consultant flows through them.
+ *  `key` matches the JSON returned by GET /metrics/consultants; `wire` is the
+ *  MongoDB condition the number is counted from (shown as the tile's caption). */
 const METRICS: {
-  key: 'leads' | 'blogSummary' | 'leadContext' | 'emailOpened' | 'voiceCompleted';
+  key: keyof ConsultantMetrics;
   label: string;
   wire: string;
   icon: typeof Users;
   chip: string; // icon chip background
   tint: string; // number colour
 }[] = [
-  { key: 'leads', label: 'Leads', wire: 'contact.creation', icon: Users, chip: 'bg-[#efeaff] text-[#7c3aed]', tint: 'text-[#6d28d9]' },
-  { key: 'blogSummary', label: 'Blog Summary', wire: 'ticket.blog_summary', icon: FileText, chip: 'bg-[#e7f0ff] text-[#2563eb]', tint: 'text-[#1d4ed8]' },
-  { key: 'leadContext', label: 'Lead Context', wire: 'lead_context', icon: ScrollText, chip: 'bg-[#eafaf1] text-[#16a34a]', tint: 'text-[#15803d]' },
-  { key: 'emailOpened', label: 'Email Opened', wire: 'email_status=OPENED', icon: MailOpen, chip: 'bg-[#fff2e6] text-[#ea7317]', tint: 'text-[#c2570c]' },
-  { key: 'voiceCompleted', label: 'Voice Completed', wire: 'voice_status=COMPLETED', icon: PhoneCall, chip: 'bg-[#fdeaf6] text-[#c026d3]', tint: 'text-[#a21caf]' },
+  { key: 'consultants', label: 'Consultants', wire: 'consultants', icon: Users, chip: 'bg-[#efeaff] text-[#7c3aed]', tint: 'text-[#6d28d9]' },
+  { key: 'decisionMakers', label: 'Decision Makers', wire: 'decision_maker=true', icon: UserCheck, chip: 'bg-[#e7f0ff] text-[#2563eb]', tint: 'text-[#1d4ed8]' },
+  { key: 'emailed', label: 'Emailed', wire: 'stage ≥ emailed', icon: MailCheck, chip: 'bg-[#eafaf1] text-[#16a34a]', tint: 'text-[#15803d]' },
+  { key: 'engaged', label: 'Engaged', wire: 'stage ≥ engaged', icon: MessageSquareReply, chip: 'bg-[#fff2e6] text-[#ea7317]', tint: 'text-[#c2570c]' },
+  { key: 'qualified', label: 'Qualified', wire: 'stage ≥ qualified', icon: BadgeCheck, chip: 'bg-[#fdeaf6] text-[#c026d3]', tint: 'text-[#a21caf]' },
 ];
 
 interface QueuedCsv {
@@ -76,18 +77,8 @@ export default function UploadPage() {
   const [sending, setSending] = useState(false);
   const [summary, setSummary] = useState<IngestSummary | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
-  // Real HubSpot totals for the tiles. Fetched on load, then re-fetched
-  // whenever a change arrives over the live stream (lastEventAt changes).
-  const { lastEventAt } = useAGUIState();
-  const [metrics, setMetrics] = useState<Record<string, number> | null>(null);
-
-  useEffect(() => {
-    const url = `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/metrics/hubspot`;
-    fetch(url)
-      .then((r) => r.json())
-      .then((data) => setMetrics(data))
-      .catch(() => {});
-  }, [lastEventAt]);
+  // Live MongoDB totals for the tiles.
+  const { metrics, refresh: refreshMetrics } = useConsultantMetrics();
 
   function addFiles(files: File[]) {
     setSummary(null);
@@ -133,13 +124,10 @@ export default function UploadPage() {
   }
 
   const parsing = queue.some((q) => q.rows === null && !q.error);
-  const ready = queue.length === REQUIRED_FILES && !parsing && queue.every((q) => !q.error);
+  const ready = queue.length >= MIN_FILES && !parsing && queue.every((q) => !q.error);
 
-  // Number the downstream agent confirmed it pushed (falls back to the count we forwarded).
-  const pushed =
-    summary?.endpointResponse && typeof summary.endpointResponse === 'object'
-      ? (summary.endpointResponse as { counts?: { pushed?: number } }).counts?.pushed
-      : undefined;
+  const saved = summary?.insertedCount;
+  const noun = summary?.kind === 'consultants' ? 'consultant' : 'lead';
 
   async function handleUpload() {
     if (!ready || sending) return;
@@ -152,11 +140,14 @@ export default function UploadPage() {
 
     try {
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/leads/ingest`,
+        `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000'}/leads/ingest`,
         { method: 'POST', body: formData }
       );
       const body = await res.json();
-      if ('total' in body) setSummary(body as IngestSummary);
+      if ('total' in body) {
+        setSummary(body as IngestSummary);
+        refreshMetrics();
+      }
       else setRequestError(body.error ?? `Server responded ${res.status}`);
     } catch {
       setRequestError('Could not reach the ingest API.');
@@ -184,13 +175,16 @@ export default function UploadPage() {
         <Panel className="animate-rise" eyebrow="Summary" title="Import status">
           <dl className="space-y-3">
             {[
-              ['Files queued', `${queue.length} / ${REQUIRED_FILES}`, 'text-ink'],
-              ['Employees seen', summary ? summary.total : '—', 'text-ink'],
+              ['Files queued', `${queue.length}`, 'text-ink'],
+              ['Records seen', summary ? summary.total : '—', 'text-ink'],
               [
-                'Employees pushed',
-                summary ? (pushed ?? summary.valid) : '—',
+                'Records saved',
+                summary ? (saved ?? 0) : '—',
                 'text-status-success',
               ],
+              ...(summary?.skippedDuplicate
+                ? [['Already saved (skipped)', summary.skippedDuplicate, 'text-ink-muted']]
+                : []),
               [
                 'Invalid',
                 summary ? summary.invalid : '—',
@@ -227,9 +221,7 @@ export default function UploadPage() {
             ) : (
               <>
                 <Send className="h-4 w-4" />
-                {queue.length === REQUIRED_FILES
-                  ? 'Process & Forward'
-                  : `Add more file`}
+                {queue.length >= MIN_FILES ? 'Process & Save' : 'Add a file'}
               </>
             )}
           </button>
@@ -248,7 +240,7 @@ export default function UploadPage() {
         </Panel>
       )}
 
-      {summary && (summary.errors.length > 0 || !!summary.forwardError) && (
+      {summary && (summary.errors.length > 0 || !!summary.dbError) && (
         <Panel
           tone="danger"
           className="mt-5 animate-rise"
@@ -256,13 +248,15 @@ export default function UploadPage() {
           title={
             summary.valid === 0
               ? summary.skippedNonDecisionMaker + summary.skippedNotLead > 0
-                ? 'No eligible leads to forward'
+                ? 'No eligible leads to save'
                 : 'No records passed validation'
-              : 'Validated, but forwarding failed'
+              : summary.dbError
+                ? 'Validated, but saving to the database failed'
+                : 'Some rows were rejected'
           }
         >
-          {summary.forwardError && (
-            <p className="mb-3 text-xs text-status-failed">{summary.forwardError}</p>
+          {summary.dbError && (
+            <p className="mb-3 text-xs text-status-failed">{summary.dbError}</p>
           )}
 
           {summary.errors.length > 0 && (
@@ -297,12 +291,12 @@ export default function UploadPage() {
         </Panel>
       )}
 
-      {summary?.forwarded && summary.errors.length === 0 && (
+      {summary?.inserted && (
         <Panel tone="success" className="mt-5 animate-rise">
           <div className="flex items-start gap-3">
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-status-success" />
             <p className="text-sm text-ink">
-              {pushed ?? summary.valid} lead{(pushed ?? summary.valid) === 1 ? '' : 's'} pushed to the endpoint.
+              {saved} {noun}{saved === 1 ? '' : 's'} saved to MongoDB.
             </p>
           </div>
         </Panel>

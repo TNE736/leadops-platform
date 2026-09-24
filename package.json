@@ -2,7 +2,7 @@
   "name": "leadops-platform",
   "version": "0.1.0",
   "private": true,
-  "description": "LeadOps AI Platform — Next.js frontend (AG-UI), HubSpot-centric architecture (no Kafka/PubSub)",
+  "description": "LeadOps AI Platform — Next.js frontend (AG-UI), MongoDB-centric architecture (no Kafka/PubSub)",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

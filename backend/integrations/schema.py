@@ -101,3 +101,50 @@ class LeadProfile(BaseModel):
 
 
 LEAD_FIELDS: tuple[str, ...] = tuple(LeadProfile.model_fields)
+
+
+class ConsultantProfile(BaseModel):
+    """One bench consultant. Mandatory: first_name, email (the dedupe key,
+    stored lowercase). The rest serialize as null when empty."""
+
+    first_name: str
+    last_name: str | None = None
+    email: str
+    phone: str | None = None
+    technology: str | None = None
+    title: str | None = None
+    seniority: str | None = None
+    visa_status: str | None = None
+
+    @field_validator(
+        "last_name", "phone", "technology", "title", "seniority", "visa_status",
+        mode="before",
+    )
+    @classmethod
+    def _empty_to_none(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    @field_validator("first_name", "email", mode="before")
+    @classmethod
+    def _required(cls, v):
+        s = "" if v is None else str(v).strip()
+        if not s:
+            raise ValueError("required")
+        return s
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        if not EMAIL_RE.match(v):
+            raise ValueError("invalid email format")
+        return v.lower()
+
+    @field_validator("phone")
+    @classmethod
+    def _phone(cls, v: str | None) -> str | None:
+        if v is not None and not PHONE_RE.match(v):
+            raise ValueError("invalid phone number")
+        return v

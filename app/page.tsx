@@ -33,8 +33,8 @@ export default function HomePage() {
           <Link href="/upload" className="text-sm text-ink-muted transition-colors hover:text-ink">
             Upload Leads
           </Link>
-          <Link href="/integrations" className="text-sm text-ink-muted transition-colors hover:text-ink">
-            Integrations
+          <Link href="/lead-journey" className="text-sm text-ink-muted transition-colors hover:text-ink">
+            Lead journey
           </Link>
         </nav>
 
@@ -71,8 +71,9 @@ export default function HomePage() {
           </h1>
 
           <p className="mt-5 max-w-md text-base leading-relaxed text-ink-secondary sm:text-lg">
-            LeadOps scores, syncs to HubSpot, emails, and places an AI voice call the moment a
-            lead engages — one continuous pipeline you can watch run, step by step, in real time.
+            LeadOps loads your consultants into MongoDB, emails them about matching roles, and
+            follows up the moment they engage — one continuous pipeline you can watch run, step by
+            step, in real time.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-6">

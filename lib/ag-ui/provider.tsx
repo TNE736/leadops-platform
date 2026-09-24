@@ -18,7 +18,6 @@ function emptyStageCounts(): Record<PipelineStage, number> {
     'lead.eligibility.checked': 0,
     'crm.contact.upserted': 0,
     'email.sent': 0,
-    'email.status.synced': 0,
     'voice.trigger.requested': 0,
     'voice.completed': 0,
     'crm.updated': 0,

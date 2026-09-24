@@ -1,15 +1,14 @@
 /**
  * AG-UI Protocol — shared types
  *
- * Reflects the current architecture (see the architecture poster):
- * CSV -> Lead Profile Agent -> HubSpot CRM (system of record) -> Email Agent
- * -> Mailgun -> webhook -> HubSpot -> webhook -> Voice Agent -> HubSpot,
- * all relayed to the frontend by the AG-UI Gateway over SSE/WebSocket.
+ * Reflects the current architecture:
+ * CSV -> ingest API -> MongoDB `bench_outreach.consultants` (system of record)
+ * -> bench-outreach agents (Email Agent sends via Mailgun, …), with events
+ * relayed to the frontend by the AG-UI Gateway over SSE/WebSocket.
  *
- * There is no Kafka/PubSub backbone. HubSpot itself is the shared state
- * every agent reads and writes via MCP; the Gateway's Webhook Receiver is
- * what turns HubSpot's own webhooks (and Mailgun's, one hop upstream of
- * HubSpot) into events on this stream.
+ * There is no Kafka/PubSub backbone. MongoDB itself is the shared state every
+ * agent reads and writes; services publish events to the Gateway to light up
+ * the live views.
  */
 
 /** Pipeline stage identifiers, in the order a lead moves through them. */
@@ -18,7 +17,6 @@ export type PipelineStage =
   | 'lead.eligibility.checked'
   | 'crm.contact.upserted'
   | 'email.sent'
-  | 'email.status.synced'
   | 'voice.trigger.requested'
   | 'voice.completed'
   | 'crm.updated'
@@ -32,20 +30,16 @@ export type PipelineStage =
 /** Matches the Event Status Legend on the architecture poster. */
 export type EventStatus = 'success' | 'running' | 'triggered' | 'waiting' | 'failed';
 
-/** HubSpot email-status values, carried in email.status.synced events. */
-export type EmailSyncStatus = 'sent' | 'delivered' | 'opened' | 'bounced';
-
 /**
  * Who published the event. Distinguishes "an agent decided this synchronously"
- * from "HubSpot told us something changed" — the two failure modes behave
- * very differently, so Agent Traces and Alerts group by this field.
+ * from "a webhook told us something changed" — the two failure modes behave
+ * very differently, so the feeds group by this field.
  */
 export type EventSource =
   | 'lead-profile-agent'
   | 'email-agent'
   | 'voice-agent'
   | 'mailgun-webhook'
-  | 'hubspot-webhook'
   | 'agent-gateway';
 
 export interface AGUIEventBase {
@@ -54,7 +48,6 @@ export interface AGUIEventBase {
   status: EventStatus;
   timestamp: string; // ISO 8601
   leadId?: string;
-  hubspotContactId?: string;
   source: EventSource;
 }
 
@@ -70,18 +63,12 @@ export interface LeadEligibilityCheckedEvent extends AGUIEventBase {
 
 export interface CrmContactUpsertedEvent extends AGUIEventBase {
   type: 'crm.contact.upserted';
-  payload: { hubspotContactId: string; stage: string };
+  payload: { consultantId: string; stage: string };
 }
 
 export interface EmailSentEvent extends AGUIEventBase {
   type: 'email.sent';
   payload: { messageId: string; to: string; subject: string };
-}
-
-/** Fired by the Webhook Receiver after HubSpot's own webhook confirms a property change. */
-export interface EmailStatusSyncedEvent extends AGUIEventBase {
-  type: 'email.status.synced';
-  payload: { status: EmailSyncStatus; hubspotProperty: string };
 }
 
 export interface VoiceTriggerRequestedEvent extends AGUIEventBase {
@@ -96,7 +83,7 @@ export interface VoiceCompletedEvent extends AGUIEventBase {
 
 export interface CrmUpdatedEvent extends AGUIEventBase {
   type: 'crm.updated';
-  payload: { hubspotContactId: string; stage: string };
+  payload: { consultantId: string; stage: string };
 }
 
 export interface ErrorOccurredEvent extends AGUIEventBase {
@@ -129,7 +116,6 @@ export type AGUIEvent =
   | LeadEligibilityCheckedEvent
   | CrmContactUpsertedEvent
   | EmailSentEvent
-  | EmailStatusSyncedEvent
   | VoiceTriggerRequestedEvent
   | VoiceCompletedEvent
   | CrmUpdatedEvent
@@ -156,7 +142,6 @@ export const PIPELINE_STAGE_ORDER: PipelineStage[] = [
   'lead.eligibility.checked',
   'crm.contact.upserted',
   'email.sent',
-  'email.status.synced',
   'voice.trigger.requested',
   'voice.completed',
   'crm.updated',
@@ -165,12 +150,11 @@ export const PIPELINE_STAGE_ORDER: PipelineStage[] = [
 export const STAGE_LABELS: Record<PipelineStage, string> = {
   'lead.created': 'New lead created',
   'lead.eligibility.checked': 'Scored & eligibility checked',
-  'crm.contact.upserted': 'Written to HubSpot via MCP',
+  'crm.contact.upserted': 'Saved to MongoDB',
   'email.sent': 'Email Agent sent via Mailgun',
-  'email.status.synced': 'HubSpot property synced via webhook',
   'voice.trigger.requested': 'Gateway notified Voice Agent',
   'voice.completed': 'Call outcome captured',
-  'crm.updated': 'HubSpot updated with results',
+  'crm.updated': 'MongoDB updated with results',
   'error.occurred': 'Pipeline error',
   'blog.summary': 'Blog Summary generated',
   'research.completed': 'Research Agent enriched',
@@ -179,26 +163,22 @@ export const STAGE_LABELS: Record<PipelineStage, string> = {
 };
 
 /**
- * The Lead Journey stage sequence (new taxonomy).
- * Milestones carry an `event` that marks them reached; relay hops (the Gateway)
- * light up once the preceding milestone has been reached.
+ * The Lead Journey stage sequence: bench-outreach's `qualification_stage`
+ * values, in order. `key` matches the `reached` map from GET /consultants/journey.
  */
 export interface JourneyStage {
   key: string;
   label: string;
-  kind: 'milestone' | 'relay';
-  event?: PipelineStage;
 }
 
 export const LEAD_JOURNEY: JourneyStage[] = [
-  { key: 'blog.summary', label: 'Blog Summary generated', kind: 'milestone', event: 'blog.summary' },
-  { key: 'gw1', label: 'Gateway · relayed', kind: 'relay' },
-  { key: 'research.completed', label: 'Research Agent enriched', kind: 'milestone', event: 'research.completed' },
-  { key: 'lead.context', label: 'Lead Context ready', kind: 'milestone', event: 'lead.context' },
-  { key: 'gw2', label: 'Gateway · relay', kind: 'relay' },
-  { key: 'email.sent', label: 'Email Agent sent', kind: 'milestone', event: 'email.sent' },
-  { key: 'gw3', label: 'Gateway · relay', kind: 'relay' },
-  { key: 'voice.completed', label: 'Voice Agent completed', kind: 'milestone', event: 'voice.completed' },
+  { key: 'loaded', label: 'Loaded into MongoDB' },
+  { key: 'emailed', label: 'Emailed about a role' },
+  { key: 'engaged', label: 'Replied (engaged)' },
+  { key: 'researched', label: 'Researched' },
+  { key: 'followed_up', label: 'Qualifying follow-up sent' },
+  { key: 'qualified', label: 'Qualified' },
+  { key: 'handed_off', label: 'Handed off to Bench TA' },
 ];
 
 /** Human-readable names for each publisher, used in feeds and trace headers. */
@@ -207,9 +187,5 @@ export const SOURCE_LABELS: Record<EventSource, string> = {
   'email-agent': 'Email Agent',
   'voice-agent': 'Voice Agent',
   'mailgun-webhook': 'Mailgun webhook',
-  'hubspot-webhook': 'HubSpot webhook',
   'agent-gateway': 'AG-UI Gateway',
 };
-
-/** Sources that only reach the frontend via HubSpot's own webhook, one hop removed from the agent that caused them. */
-export const WEBHOOK_SOURCES: EventSource[] = ['mailgun-webhook', 'hubspot-webhook'];

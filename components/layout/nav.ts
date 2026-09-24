@@ -2,7 +2,6 @@ import {
   LayoutDashboard,
   UploadCloud,
   GitCommitHorizontal,
-  Webhook,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -33,10 +32,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/upload', label: 'Upload Leads', icon: UploadCloud },
       { href: '/lead-journey', label: 'Lead journey', icon: GitCommitHorizontal },
     ],
-  },
-  {
-    label: 'Operations',
-    items: [{ href: '/integrations', label: 'Integrations', icon: Webhook }],
   },
 ];
 

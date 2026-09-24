@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import {
   Users,
-  Database,
-  CheckCircle2,
+  UserCheck,
+  BadgeCheck,
   AlertTriangle,
   Activity,
   Gauge,
@@ -17,6 +17,7 @@ import { EventFeed } from '@/components/events/EventFeed';
 import { AreaChart } from '@/components/charts/AreaChart';
 import { RadialMeter } from '@/components/charts/RadialMeter';
 import { useAGUIState } from '@/lib/ag-ui/provider';
+import { useConsultantMetrics } from '@/hooks/useConsultantMetrics';
 import { SOURCE_LABELS, type AGUIEvent, type EventSource } from '@/lib/ag-ui/types';
 import { formatRelativeTime } from '@/lib/utils';
 
@@ -42,26 +43,17 @@ const WORKERS: Array<{ source: EventSource; accent: string }> = [
   { source: 'email-agent', accent: '#C026D3' },
   { source: 'voice-agent', accent: '#059669' },
   { source: 'agent-gateway', accent: '#4338CA' },
-  { source: 'hubspot-webhook', accent: '#B45309' },
   { source: 'mailgun-webhook', accent: '#E11D48' },
 ];
 
 export default function DashboardPage() {
-  const { events, activeLeads, stageCounts, lastEventAt } = useAGUIState();
+  const { events, activeLeads } = useAGUIState();
   const failed = events.filter((e) => e.status === 'failed').length;
 
-  // Real totals from HubSpot (all leads already in the system, not just this
-  // session's live events). Fetched on load and refreshed whenever a change
-  // arrives over the stream. The throughput chart, feed and worker load below
+  // Real totals from MongoDB (every consultant in the system, not just this
+  // session's live events). The throughput chart, feed and worker load below
   // stay purely live — this only backs the top KPIs and the conversion ring.
-  const [metrics, setMetrics] = useState<Record<string, number> | null>(null);
-  useEffect(() => {
-    const url = `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/metrics/hubspot`;
-    fetch(url)
-      .then((r) => r.json())
-      .then((d) => setMetrics(d))
-      .catch(() => {});
-  }, [lastEventAt]);
+  const { metrics } = useConsultantMetrics();
 
   const series = useMemo(
     () => ({
@@ -74,14 +66,11 @@ export default function DashboardPage() {
   );
 
   const lastMinute = series.all.slice(-6).reduce((a, b) => a + b, 0);
-  const created = stageCounts['lead.created'];
-  const completed = stageCounts['crm.updated'];
 
-  // Prefer the HubSpot totals; fall back to live-stream counts until they load.
-  const hsLeads = metrics?.leads ?? activeLeads;
-  const hsContacts = metrics?.leads ?? stageCounts['crm.contact.upserted'];
-  const hsCompleted = metrics?.voiceCompleted ?? completed;
-  const convTotal = metrics?.leads ?? created;
+  // Prefer the MongoDB totals; fall back to live-stream counts until they load.
+  const consultants = metrics?.consultants ?? activeLeads;
+  const decisionMakers = metrics?.decisionMakers ?? 0;
+  const qualified = metrics?.qualified ?? 0;
 
   const workerRows = useMemo(
     () =>
@@ -99,33 +88,33 @@ export default function DashboardPage() {
         eyebrow="Mission Control"
         title="Pipeline overview"
         titleFont="font-dashboard"
-        description="Every lead moving through CSV ingestion, the lead agents, email delivery, the voice agent, and the HubSpot CRM update — live."
+        description="Every consultant moving through CSV ingestion, MongoDB, and the outreach agents — live."
       />
 
       {/* KPI row */}
       <div className="stagger grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          label="Active Leads"
-          value={hsLeads}
-          hint="Leads in HubSpot"
+          label="Consultants"
+          value={consultants}
+          hint="In MongoDB"
           icon={Users}
           accent="#7C3AED"
           series={series.all}
           delta={`${lastMinute} events/min`}
         />
         <StatCard
-          label="Contacts in HubSpot"
-          value={hsContacts}
-          hint="Upserted via MCP"
-          icon={Database}
+          label="Decision makers"
+          value={decisionMakers}
+          hint="Approved for outreach"
+          icon={UserCheck}
           accent="#4338CA"
           series={series.crm}
         />
         <StatCard
-          label="Completed"
-          value={hsCompleted}
-          hint="Voice call completed"
-          icon={CheckCircle2}
+          label="Qualified"
+          value={qualified}
+          hint="Qualified or handed off"
+          icon={BadgeCheck}
           accent="#059669"
           series={series.done}
         />
@@ -155,17 +144,17 @@ export default function DashboardPage() {
         <Panel
           className="animate-rise"
           eyebrow="Conversion"
-          title="Reached voice completion"
+          title="Reached qualification"
           accent="#059669"
           icon={<Gauge className="h-[18px] w-[18px]" />}
         >
           <div className="flex flex-col items-center py-2">
             <RadialMeter
-              value={hsCompleted}
-              max={Math.max(1, convTotal)}
-              label="converted"
+              value={qualified}
+              max={Math.max(1, consultants)}
+              label="qualified"
               color="#059669"
-              sublabel={`${hsCompleted} of ${convTotal} leads reached voice completion`}
+              sublabel={`${qualified} of ${consultants} consultants reached qualification`}
             />
           </div>
         </Panel>

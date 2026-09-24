@@ -2,8 +2,13 @@
 
 parse (3 CSVs) -> index -> join (employee files on employee_id+company_id,
 company files on company_id) -> lead-list rule -> validate (schema.LeadRecord)
--> decision-maker filter -> forward the JSON batch to the target endpoint.
+-> decision-maker filter -> insert the eligible records into MongoDB.
 Invalid rows are reported with file, line and reasons — never silently dropped.
+
+Consultant roster files (first_name, email, … and no company_id) take a separate
+path: validate (schema.ConsultantProfile) -> drop emails already in the batch or
+the collection -> insert the new ones into MongoDB with the starting fields the
+bench-outreach pipeline expects (see CONSULTANT_STARTING_FIELDS).
 """
 
 from __future__ import annotations
@@ -11,17 +16,26 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
-import os
 import re
 
-import httpx
 from pydantic import ValidationError
+from pymongo.collection import Collection
+from pymongo.errors import BulkWriteError, PyMongoError
 
-from schema import LEAD_FIELDS, LeadProfile
+from schema import LEAD_FIELDS, ConsultantProfile, LeadProfile
 
-FORWARD_TIMEOUT_S = 600.0
-FORWARD_ATTEMPTS = 1
 MAX_REPORTED_ERRORS = 200
+
+# bench-outreach reads bench_outreach.consultants. A new consultant starts at
+# stage "loaded", not yet a decision maker; a person flips decision_maker in
+# Compass, and bench-outreach's gateway picks that change up. Existing
+# consultants are never touched, so their pipeline progress is safe.
+CONSULTANT_STARTING_FIELDS = {
+    "decision_maker": False,
+    "opted_out": False,
+    "qualification_stage": "loaded",
+}
+DUPLICATE_KEY_ERROR = 11000
 
 FIELD_ALIASES: dict[str, list[str]] = {
     "employee_id": ["employee_id", "emp_id", "employeeid", "empid", "employee"],
@@ -58,6 +72,18 @@ FIELD_ALIASES: dict[str, list[str]] = {
 }
 
 
+CONSULTANT_ALIASES: dict[str, list[str]] = {
+    "first_name": ["first_name", "firstname", "fname"],
+    "last_name": ["last_name", "lastname", "lname", "surname"],
+    "email": ["email", "e_mail", "email_address"],
+    "phone": ["phone", "phone_number", "mobile", "contact_number"],
+    "technology": ["technology", "tech", "skill", "skills", "primary_skill"],
+    "title": ["title", "job_title", "designation", "role"],
+    "seniority": ["seniority", "level", "experience_level"],
+    "visa_status": ["visa_status", "visa", "work_authorization"],
+}
+
+
 def _canon(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
@@ -65,6 +91,12 @@ def _canon(s: str) -> str:
 CANONICAL_LOOKUP = {
     _canon(alias): field
     for field, aliases in FIELD_ALIASES.items()
+    for alias in aliases
+}
+
+CONSULTANT_LOOKUP = {
+    _canon(alias): field
+    for field, aliases in CONSULTANT_ALIASES.items()
     for alias in aliases
 }
 
@@ -86,42 +118,22 @@ class ParsedFile:
         self.rows = rows  # (csv line number, canonical-field -> value)
 
 
-async def push_to_lead_profile_agent(lead_profiles: list[dict], endpoint: str) -> dict:
-    """POST the lead profiles to the Lead Profile Agent as a plain list."""
-    headers = {}
-    token = os.environ.get("LEADS_FORWARD_AUTH_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    last_error = ""
-    async with httpx.AsyncClient(timeout=FORWARD_TIMEOUT_S) as client:
-        for attempt in range(1, FORWARD_ATTEMPTS + 1):
-            try:
-                res = await client.post(endpoint, json=lead_profiles, headers=headers)
-                if res.is_success:
-                    try:
-                        return {"ok": True, "endpointResponse": res.json()}
-                    except ValueError:
-                        return {"ok": True, "endpointResponse": None}
-                if res.status_code < 500:  # contract problem — retrying cannot fix it
-                    return {"ok": False, "error": f"endpoint rejected batch ({res.status_code})"}
-                last_error = f"endpoint responded {res.status_code}"
-            except httpx.HTTPError as e:
-                last_error = str(e) or "network error"
-            if attempt < FORWARD_ATTEMPTS:
-                await asyncio.sleep(0.5 * 2 ** (attempt - 1))
-    return {"ok": False, "error": f"{last_error} (after {FORWARD_ATTEMPTS} attempts)"}
-
-
 async def run_csv_processor(
-    files: list[tuple[str, bytes]], lead_profile_agent_endpoint: str
+    files: list[tuple[str, bytes]], mongo_collection: Collection
 ) -> dict:
-    if len(files) != 3:
-        raise IngestError(f"expected exactly 3 CSV files, received {len(files)}")
+    if not files:
+        raise IngestError("expected at least 1 CSV file, received 0")
+
+    opened = [(name, _open_csv(name, data)) for name, data in files]
+    consultant_files = [_is_consultant_file(r.fieldnames) for _, r in opened]
+    if all(consultant_files):
+        return await run_consultant_import(opened, mongo_collection)
+    if any(consultant_files):
+        raise IngestError("upload consultant files and lead files separately")
 
     errors: list[dict] = []
 
-    parsed = [parse_csv_file(name, data) for name, data in files]
+    parsed = [parse_csv_file(name, reader) for name, reader in opened]
     employee_files = [p for p in parsed if p.has_employee_id]
     company_files = [p for p in parsed if not p.has_employee_id]
     if not employee_files:
@@ -142,14 +154,14 @@ async def run_csv_processor(
         source_file = next(f for f, h in zip(employee_files, emp_hits) if h)
         first_line = next(h for h in emp_hits if h)[0]
 
-        # Business rule: an employee is a lead only if present in EVERY
-        # employee-level file — the employee-with-company file defines the
-        # lead list, so an employee missing from it has no company association.
+        # Business rule: an employee is a lead only if present in EVERY employee-level file
         if not all(emp_hits):
             skipped_not_lead += 1
             continue
 
-        missing_company = [f.name for f, h in zip(company_files, comp_hits) if not h]
+        missing_company = [
+            f.name for f, h in zip(company_files, comp_hits) if not h
+        ]
         if missing_company:
             errors.append(
                 {
@@ -187,7 +199,7 @@ async def run_csv_processor(
             )
             continue
 
-        # Business rule: only decision makers are pushed downstream.
+        # Business rule: only decision makers are saved.
         if leadprofiles.decision_maker_flag == "No":
             skipped_non_dm += 1
         else:
@@ -198,25 +210,128 @@ async def run_csv_processor(
         "valid": len(records),
         "skippedNonDecisionMaker": skipped_non_dm,
         "skippedNotLead": skipped_not_lead,
-        "invalid": len(all_keys) - len(records) - skipped_non_dm - skipped_not_lead,
-        "forwarded": False,
-        "targetUrl": lead_profile_agent_endpoint,
+        "invalid": len(all_keys)
+        - len(records)
+        - skipped_non_dm
+        - skipped_not_lead,
+        "inserted": False,
         "errors": errors[:MAX_REPORTED_ERRORS],
         "errorsOmitted": max(0, len(errors) - MAX_REPORTED_ERRORS),
     }
 
     if not records:
-        return summary  # caller answers 422
+        return summary
 
-    forward = await push_to_lead_profile_agent(records, lead_profile_agent_endpoint)
-    summary["forwarded"] = forward["ok"]
-    summary["endpointResponse"] = forward.get("endpointResponse")
-    if not forward["ok"]:
-        summary["forwardError"] = forward["error"]
+    lead_ids = [r["employee_id"] for r in records]
+
+    # Insert into MongoDB. PyMongo is blocking, so keep it off the event loop.
+    try:
+        result = await asyncio.to_thread(mongo_collection.insert_many, records)
+        summary["inserted"] = True
+        summary["insertedCount"] = len(result.inserted_ids)
+        summary["leadIds"] = lead_ids
+    except PyMongoError as e:
+        summary["inserted"] = False
+        summary["dbError"] = str(e)
+
+    return summary
+
+async def run_consultant_import(
+    files: list[tuple[str, csv.DictReader]], mongo_collection: Collection
+) -> dict:
+    errors: list[dict] = []
+    records: list[dict] = []
+    seen: set[str] = set()
+    total = 0
+    skipped_duplicate = 0
+
+    for name, reader in files:
+        header_map: dict[str, str] = {}
+        for header in reader.fieldnames:
+            field = CONSULTANT_LOOKUP.get(_canon(header))
+            if field and field not in header_map.values():
+                header_map[header] = field
+
+        for line, raw in enumerate(reader, start=2):
+            if not any((v or "").strip() for v in raw.values()):
+                continue
+            total += 1
+            candidate = {field: raw.get(header) for header, field in header_map.items()}
+            try:
+                consultant = ConsultantProfile(**candidate)
+            except ValidationError as e:
+                errors.append(
+                    {
+                        "file": name,
+                        "row": line,
+                        "key": candidate.get("email") or None,
+                        "issues": [
+                            f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}"
+                            for err in e.errors()
+                        ],
+                    }
+                )
+                continue
+            if consultant.email in seen:
+                skipped_duplicate += 1
+                continue
+            seen.add(consultant.email)
+            records.append(consultant.model_dump())
+
+    summary = {
+        "kind": "consultants",
+        "total": total,
+        "valid": len(records),
+        "skippedNonDecisionMaker": 0,
+        "skippedNotLead": 0,
+        "skippedDuplicate": skipped_duplicate,
+        "invalid": total - len(records) - skipped_duplicate,
+        "inserted": False,
+        "insertedCount": 0,
+        "errors": errors[:MAX_REPORTED_ERRORS],
+        "errorsOmitted": max(0, len(errors) - MAX_REPORTED_ERRORS),
+    }
+
+    if not records:
+        return summary
+
+    # PyMongo is blocking, so keep it off the event loop.
+    def insert_new() -> int:
+        existing = {
+            doc["email"]
+            for doc in mongo_collection.find(
+                {"email": {"$in": [r["email"] for r in records]}}, {"email": 1}
+            )
+        }
+        new = [
+            {**r, **CONSULTANT_STARTING_FIELDS}
+            for r in records
+            if r["email"] not in existing
+        ]
+        summary["skippedDuplicate"] += len(records) - len(new)
+        if not new:
+            return 0
+        try:
+            return len(mongo_collection.insert_many(new, ordered=False).inserted_ids)
+        except BulkWriteError as e:
+            # Someone else saved the same email between our check and the insert
+            # (the collection has a unique email index): count it as a duplicate.
+            write_errors = e.details.get("writeErrors", [])
+            if any(w.get("code") != DUPLICATE_KEY_ERROR for w in write_errors):
+                raise
+            summary["skippedDuplicate"] += len(write_errors)
+            return e.details.get("nInserted", 0)
+
+    try:
+        summary["insertedCount"] = await asyncio.to_thread(insert_new)
+        summary["inserted"] = True
+    except PyMongoError as e:
+        summary["dbError"] = str(e)
+
     return summary
 
 
-def parse_csv_file(name: str, data: bytes) -> ParsedFile:
+def _open_csv(name: str, data: bytes) -> csv.DictReader:
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError as e:
@@ -225,7 +340,17 @@ def parse_csv_file(name: str, data: bytes) -> ParsedFile:
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
         raise IngestError(f"{name}: not a readable CSV (no header row)")
+    return reader
 
+
+def _is_consultant_file(headers: list[str]) -> bool:
+    """A consultant roster has first_name + email columns and no company_id."""
+    lead_fields = {CANONICAL_LOOKUP.get(_canon(h)) for h in headers}
+    consultant_fields = {CONSULTANT_LOOKUP.get(_canon(h)) for h in headers}
+    return "company_id" not in lead_fields and {"first_name", "email"} <= consultant_fields
+
+
+def parse_csv_file(name: str, reader: csv.DictReader) -> ParsedFile:
     header_map: dict[str, str] = {}
     for header in reader.fieldnames:
         field = CANONICAL_LOOKUP.get(_canon(header))

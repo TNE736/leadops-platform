@@ -5,7 +5,7 @@ import { AGUIProvider } from '@/lib/ag-ui/provider';
 export const metadata: Metadata = {
   title: 'LeadOps — Mission Control',
   description:
-    'From CSV to Voice Agent and HubSpot — real-time lead pipeline observability.',
+    'From CSV to MongoDB and the outreach agents — real-time pipeline observability.',
 };
 
 /**

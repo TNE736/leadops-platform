@@ -11,8 +11,8 @@ const STEPS: Array<{ icon: LucideIcon; title: string; desc: string; gradient: st
   },
   {
     icon: Database,
-    title: 'HubSpot CRM',
-    desc: 'Scored Leads upserted via MCP',
+    title: 'MongoDB',
+    desc: 'Consultants saved & tracked',
     gradient: 'linear-gradient(135deg,#7C3AED,#A855F7)',
   },
   {
@@ -29,8 +29,8 @@ const STEPS: Array<{ icon: LucideIcon; title: string; desc: string; gradient: st
   },
   {
     icon: CheckCircle2,
-    title: 'CRM updated',
-    desc: 'Outcome written back',
+    title: 'Stage updated',
+    desc: 'Outcome written to MongoDB',
     gradient: 'linear-gradient(135deg,#6D28D9,#4338CA)',
   },
 ];

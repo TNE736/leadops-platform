@@ -135,7 +135,7 @@ export function getAGUIClient(): AGUIClient {
       // Connect straight to the gateway. Going through the Next.js
       // /api/ag-ui rewrite buffers the SSE stream, so events never reach the
       // browser live; a direct connection (with CORS on the gateway) fixes it.
-      sseUrl: process.env.NEXT_PUBLIC_LIVE_UPDATES_URL || 'http://localhost:4000/events',
+      sseUrl: process.env.NEXT_PUBLIC_LIVE_UPDATES_URL || 'http://127.0.0.1:4000/events',
       wsUrl: process.env.NEXT_PUBLIC_LIVE_UPDATES_WS_URL,
     });
   }
