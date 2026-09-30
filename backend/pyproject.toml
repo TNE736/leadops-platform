@@ -1,0 +1,30 @@
+[project]
+name = "lqabr-integrations"
+version = "0.1.0"
+description = "LQABR_Integrations — CSV ingestion, validation and forwarding service (FastAPI)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+    "pymongo>=4.6",
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-instrumentation-fastapi>=0.51b0",
+    "opentelemetry-instrumentation-pymongo>=0.51b0",
+    "opentelemetry-instrumentation-logging>=0.51b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.30",
+]
+
+[tool.setuptools]
+# App-style service (run with uvicorn), not an importable library —
+# install pulls the dependencies only.
+py-modules = []
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["integrations", "gateway"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N"]
+per-file-ignores = { "scripts/wsl_mongo_relay.py" = ["UP031"] }
