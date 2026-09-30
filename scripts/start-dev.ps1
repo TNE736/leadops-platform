@@ -1,14 +1,15 @@
 <#
-Starts the LeadOps stack on Windows with the repo's own Python (.venv), so it never matters
-which Python is first on PATH. The first run creates .venv and installs the Python and npm
-dependencies; later runs just start the services, each in its own PowerShell window.
+Starts the LeadOps stack on Windows with the repo's own Python (backend\.venv), so it never
+matters which Python is first on PATH. The first run creates backend\.venv and installs the
+Python (backend\) and npm (frontend\) dependencies; later runs just start the services, each
+in its own PowerShell window.
 
     .\scripts\start-dev.ps1                  ingest API, gateway and UI (+ the MongoDB relay if needed)
     .\scripts\start-dev.ps1 -StubDatabase    same, but the ingest API writes to bench_outreach_stub
     .\scripts\start-dev.ps1 -Relay           always start the relay, even if MongoDB answers without it
     .\scripts\start-dev.ps1 -Setup           (re)install dependencies only, start nothing
 
-The MongoDB relay (scripts\wsl_mongo_relay.py) is started only when Windows cannot reach the
+The MongoDB relay (backend\scripts\wsl_mongo_relay.py) is started only when Windows cannot reach the
 WSL mongod on 127.0.0.1:27017 by itself -- that is, when WSL's localhost forwarding has dropped.
 With WSL mirrored networking, or while forwarding works, no relay window opens.
 
@@ -18,20 +19,23 @@ param([switch]$Setup, [switch]$StubDatabase, [switch]$Relay)
 $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $PSScriptRoot
-$Python = Join-Path $Root '.venv\Scripts\python.exe'
+$Backend = Join-Path $Root 'backend'
+$Frontend = Join-Path $Root 'frontend'
+$Venv = Join-Path $Backend '.venv'
+$Python = Join-Path $Venv 'Scripts\python.exe'
 
 if (-not (Test-Path $Python)) {
-    Write-Host 'Creating .venv (the repo''s own Python environment)...'
-    if (Get-Command py -ErrorAction SilentlyContinue) { py -3 -m venv (Join-Path $Root '.venv') }
-    else { python -m venv (Join-Path $Root '.venv') }
+    Write-Host 'Creating backend\.venv (the repo''s own Python environment)...'
+    if (Get-Command py -ErrorAction SilentlyContinue) { py -3 -m venv $Venv }
+    else { python -m venv $Venv }
     $Setup = $true
 }
 if ($Setup) {
-    Write-Host 'Installing Python dependencies into .venv...'
+    Write-Host 'Installing Python dependencies into backend\.venv...'
     & $Python -m pip install --upgrade pip
-    & $Python -m pip install $Root
-    Write-Host 'Installing npm dependencies...'
-    Push-Location $Root; npm install; Pop-Location
+    & $Python -m pip install $Backend
+    Write-Host 'Installing npm dependencies in frontend\...'
+    Push-Location $Frontend; npm install; Pop-Location
     if ($PSBoundParameters.ContainsKey('Setup')) { Write-Host 'Setup done.'; exit 0 }
 }
 
@@ -69,7 +73,7 @@ function Test-MongoReachable {
     return $LASTEXITCODE -eq 0
 }
 
-# One window per service; every Python service runs on .venv's python.
+# One window per service; every Python service runs on backend\.venv's python.
 function Open-ServiceWindow([string]$Title, [string]$Folder, [string]$Command) {
     $script = "`$Host.UI.RawUI.WindowTitle = '$Title'; Set-Location '$Folder'; $Command"
     Start-Process powershell -ArgumentList '-NoExit', '-Command', $script
@@ -80,7 +84,7 @@ if (-not $Relay -and (Test-MongoReachable)) {
     Write-Host 'MongoDB answers on 127.0.0.1:27017 without the relay (WSL forwarding or mirrored networking): no relay window.'
 } else {
     Write-Host 'Starting the MongoDB relay (Windows 127.0.0.1:27017 -> WSL mongod)...'
-    Open-ServiceWindow 'mongo relay' $Root "& '$Python' scripts\wsl_mongo_relay.py"
+    Open-ServiceWindow 'mongo relay' $Backend "& '$Python' scripts\wsl_mongo_relay.py"
     $Windows = 4
     Start-Sleep -Seconds 3
     if (-not (Test-MongoReachable)) {
@@ -89,10 +93,10 @@ if (-not $Relay -and (Test-MongoReachable)) {
 }
 
 $Database = if ($StubDatabase) { "`$env:MONGODB_DB = 'bench_outreach_stub'; " } else { '' }
-Open-ServiceWindow 'ingest API :8000' (Join-Path $Root 'backend\integrations') `
+Open-ServiceWindow 'ingest API :8000' (Join-Path $Backend 'integrations') `
     "$Database`$env:LOG_CONSOLE = 'rendered'; & '$Python' -m uvicorn main:app --port 8000"
-Open-ServiceWindow 'gateway :4100' (Join-Path $Root 'backend\gateway') `
+Open-ServiceWindow 'gateway :4100' (Join-Path $Backend 'gateway') `
     "& '$Python' -m uvicorn main:app --port 4100 --timeout-graceful-shutdown 2"
-Open-ServiceWindow 'UI :3000' $Root 'npm run dev'
+Open-ServiceWindow 'UI :3000' $Frontend 'npm run dev'
 
 Write-Host "Started. Open http://127.0.0.1:3000/upload  (close the $Windows windows to stop)."

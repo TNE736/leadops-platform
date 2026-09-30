@@ -23,7 +23,7 @@ py-modules = []
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-src = ["backend/integrations", "backend/gateway"]
+src = ["integrations", "gateway"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "N"]

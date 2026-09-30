@@ -37,23 +37,23 @@ Rows that fail validation are listed on the page with file, line and reason.
 ## Running it locally (Windows)
 
 **Quick start:** one command opens the services in their own windows, always on the
-repo's own Python environment (`.venv`), whatever Python is first on your PATH. It first
+repo's own Python environment (`backend\.venv`), whatever Python is first on your PATH. It first
 pings MongoDB on `127.0.0.1:27017` and opens the relay window (step 1) only if that fails:
 
 ```powershell
 cd C:\Users\StephenMiller\leadops-platform
-.\scripts\start-dev.ps1                  # first run also creates .venv and installs everything
+.\scripts\start-dev.ps1                  # first run also creates backend\.venv and installs everything
 .\scripts\start-dev.ps1 -StubDatabase    # ingest API writes to bench_outreach_stub instead
 .\scripts\start-dev.ps1 -Relay           # always start the relay
 ```
 
 If PowerShell blocks scripts: `powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1`.
-After changing `pyproject.toml` or `package.json`, run `.\scripts\start-dev.ps1 -Setup` once.
-In VS Code, terminals opened in this folder activate `.venv` automatically (`.vscode/settings.json`).
+After changing `backend\pyproject.toml` or `frontend\package.json`, run `.\scripts\start-dev.ps1 -Setup` once.
+In VS Code, select `backend\.venv\Scripts\python.exe` as the Python interpreter.
 
-To start them by hand instead, use **Windows PowerShell**, one terminal each, with `.venv`
-activated (`.\.venv\Scripts\Activate.ps1`). MongoDB itself runs inside WSL Ubuntu as replica
-set `rs0` and starts automatically with WSL.
+To start them by hand instead, use **Windows PowerShell**, one terminal each, with `backend\.venv`
+activated (`.\backend\.venv\Scripts\Activate.ps1` from the repo root). MongoDB itself runs inside
+WSL Ubuntu as replica set `rs0` and starts automatically with WSL.
 
 **1. MongoDB relay** — only when Windows can't reach MongoDB by itself. WSL normally
 forwards the WSL mongod to Windows `127.0.0.1:27017`, but on this machine that forwarding
@@ -62,7 +62,7 @@ drops shortly after WSL starts (Docker inside WSL breaks it). Check first:
 script carries Windows connections on `127.0.0.1:27017` into WSL:
 
 ```powershell
-python C:\Users\StephenMiller\leadops-platform\scripts\wsl_mongo_relay.py
+python C:\Users\StephenMiller\leadops-platform\backend\scripts\wsl_mongo_relay.py
 ```
 
 Permanent fix instead of the relay: WSL mirrored networking (Windows 11 22H2+, WSL 2.0+).
@@ -93,13 +93,16 @@ It reads the repo-root `.env` at startup; restart it after changing `.env`
 **4. UI (:3000)**
 
 ```powershell
-cd C:\Users\StephenMiller\leadops-platform
+cd C:\Users\StephenMiller\leadops-platform\frontend
 npm install   # first time only
 npm run dev
 ```
 
+Next.js reads the repo-root `.env` through `frontend\next.config.mjs`; restart `npm run dev`
+after changing it.
+
 Open http://localhost:3000/upload. Run **only one** `npm run dev`: two copies
-share the `.next` build cache and break each other's styling. If it says it is
+share the `frontend\.next` build cache and break each other's styling. If it says it is
 using port 3001, another copy is already running.
 
 To look at the data, connect MongoDB Compass to
@@ -110,10 +113,14 @@ To look at the data, connect MongoDB Compass to
 
 ```powershell
 cp .env.example .env
-.\scripts\start-dev.ps1 -Setup   # creates .venv, installs pyproject.toml and npm dependencies
+.\scripts\start-dev.ps1 -Setup   # creates backend\.venv, installs backend\pyproject.toml and frontend's npm dependencies
 ```
 
 ## Configuration (`.env`)
+
+One `.env` at the repo root serves both sides. The ingest API loads it in
+`backend/integrations/main.py`; `frontend/next.config.mjs` loads it for Next.js, which on its
+own only reads `frontend/`. Variables already set in the shell win over the file.
 
 | Variable | Used by | Default |
 |---|---|---|
@@ -181,40 +188,44 @@ Only the base URLs change between local and cloud (`NEXT_PUBLIC_BACKEND_URL`,
 One file per question. Components used by a single page live in that page.
 
 ```
-app/
-  layout.tsx                   Root: fonts, global CSS, mounts AGUIProvider so the stream connects on every page
-  page.tsx                     Landing page (/) with its ambient background and pipeline diagram
-  (app)/layout.tsx             Shell for the operational pages: TopNav + main column
-  (app)/dashboard/page.tsx     KPI tiles, throughput chart, event feed, source load
-  (app)/upload/page.tsx        Upload queue + in-browser row counting, dropzone, result panels, live tiles, the traced upload run
-  (app)/lead-journey/page.tsx  Searchable consultant list + seven-stage timeline
-  api/logs/route.ts            Receives the browser's log records → logs/frontend.jsonl + dev terminal
-components/
-  shell.tsx                    Nav data, TopNav, connection pill, PageHeader
-  ui.tsx                       Panel (the card), Pill, StatusBadge
-  charts.tsx                   linePaths, AreaChart, RadialMeter
-hooks/useCountUp.ts            Rolling-number animation (TopNav, StatCard, RadialMeter)
-lib/
-  ag-ui.tsx                    Live events: types, labels, SSE client (WebSocket fallback), provider, useAGUIState
-  api.ts                       Ingest API: base URL, response types, fetchers, JOURNEY_STAGES, polling hooks
-  frontend_logging.ts          OpenTelemetry in the browser + console renderer (mirrors integrations_logging.py)
-  theme.ts                     Brand colours and gradients (also feeds tailwind.config.ts)
-  utils.ts                     cn()
-backend/integrations/          Ingest API (FastAPI, :8000)
-  main.py                      .env loading, CORS, tracing, refusal handler, the three routes
-  db_connection.py             MongoDB collection from MONGODB_* settings
-  ingest.py                    CSV → MongoDB: contract types, ConsultantProfile, CSV helpers, file check, row loop, insert
-  queries.py                   Tile counts (one aggregation) and journey rows
-  integrations_logging.py      OpenTelemetry spans + logs as JSON lines (logs/integrations.jsonl) and their console renderer
-backend/gateway/main.py        Live-updates gateway (FastAPI, :4100): /events, /publish, /health
-scripts/wsl_mongo_relay.py     Windows ⇄ WSL MongoDB relay
+.env / .env.example              The one settings file for both sides (see Configuration)
+scripts/start-dev.ps1            Starts the whole stack; -Setup installs both sides
+frontend/                        Next.js UI (:3000) — package.json, next.config.mjs, tsconfig, Tailwind, ESLint, Prettier
+  app/
+    layout.tsx                   Root: fonts, global CSS, mounts AGUIProvider so the stream connects on every page
+    page.tsx                     Landing page (/) with its ambient background and pipeline diagram
+    (app)/layout.tsx             Shell for the operational pages: TopNav + main column
+    (app)/dashboard/page.tsx     KPI tiles, throughput chart, event feed, source load
+    (app)/upload/page.tsx        Upload queue + in-browser row counting, dropzone, result panels, live tiles, the traced upload run
+    (app)/lead-journey/page.tsx  Searchable consultant list + seven-stage timeline
+    api/logs/route.ts            Receives the browser's log records → frontend/logs/frontend.jsonl + dev terminal
+  components/
+    shell.tsx                    Nav data, TopNav, connection pill, PageHeader
+    ui.tsx                       Panel (the card), Pill, StatusBadge
+    charts.tsx                   linePaths, AreaChart, RadialMeter
+  hooks/useCountUp.ts            Rolling-number animation (TopNav, StatCard, RadialMeter)
+  lib/
+    ag-ui.tsx                    Live events: types, labels, SSE client (WebSocket fallback), provider, useAGUIState
+    api.ts                       Ingest API: base URL, response types, fetchers, JOURNEY_STAGES, polling hooks
+    frontend_logging.ts          OpenTelemetry in the browser + console renderer (mirrors integrations_logging.py)
+    theme.ts                     Brand colours and gradients (also feeds tailwind.config.ts)
+    utils.ts                     cn()
+backend/                         Python services — pyproject.toml (dependencies, ruff), .venv
+  integrations/                  Ingest API (FastAPI, :8000)
+    main.py                      .env loading, CORS, tracing, refusal handler, the three routes
+    db_connection.py             MongoDB collection from MONGODB_* settings
+    ingest.py                    CSV → MongoDB: contract types, ConsultantProfile, CSV helpers, file check, row loop, insert
+    queries.py                   Tile counts (one aggregation) and journey rows
+    integrations_logging.py      OpenTelemetry spans + logs as JSON lines (logs/integrations.jsonl) and their console renderer
+  gateway/main.py                Live-updates gateway (FastAPI, :4100): /events, /publish, /health
+  scripts/wsl_mongo_relay.py     Windows ⇄ WSL MongoDB relay
 ```
 
 ## Logs (upload flow)
 
-Every upload is one trace from the click to MongoDB. In the browser, `lib/frontend_logging.ts`
+Every upload is one trace from the click to MongoDB. In the browser, `frontend/lib/frontend_logging.ts`
 opens the `upload_consultants` run (`check_files`, `send_upload`, `show_result`); its records show in the
-DevTools console and, via `POST /api/logs`, in the `npm run dev` terminal and `logs/frontend.jsonl`; the fetch instrumentation sends `traceparent` to the ingest API. There the
+DevTools console and, via `POST /api/logs`, in the `npm run dev` terminal and `frontend/logs/frontend.jsonl`; the fetch instrumentation sends `traceparent` to the ingest API. There the
 `POST /leads/ingest` run joins the same trace, its five steps (`read_uploads`,
 `check_headers`, `validate_rows` with one item per CSV row, `find_existing_emails`,
 `insert_consultants`) and each MongoDB call, one JSON line per record in
@@ -230,8 +241,8 @@ python backend\integrations\integrations_logging.py render backend\integrations\
 
 ## Code style
 
-- Python: `ruff check .` and `ruff format backend` (settings in `pyproject.toml`, PEP 8, 120 columns).
-- TypeScript: `npm run lint`, `npm run typecheck`, and `npx prettier --write .` (settings in `.prettierrc.json`).
+- Python, from `backend/`: `ruff check .` and `ruff format integrations gateway` (settings in `backend/pyproject.toml`, PEP 8, 120 columns).
+- TypeScript, from `frontend/`: `npm run lint`, `npm run typecheck`, and `npx prettier --write .` (settings in `frontend/.prettierrc.json`).
 
 ## Troubleshooting
 
@@ -239,6 +250,6 @@ python backend\integrations\integrations_logging.py render backend\integrations\
 |---|---|
 | Upload fails with a MongoDB connection error / Compass can't connect | WSL forwarding dropped: restart with `.\scripts\start-dev.ps1 -Relay`, or start the relay (step 1). |
 | `error while attempting to bind … 8000` (or 4100) | Something already runs on that port; stop it first. |
-| Page shows unstyled links and huge icons | Two `npm run dev` copies ran at once. Stop both, delete `.next`, start one. |
+| Page shows unstyled links and huge icons | Two `npm run dev` copies ran at once. Stop both, delete `frontend\.next`, start one. |
 | Header says "Connecting…" | The live-updates gateway (:4100) isn't running. |
 | Gateway hangs on Ctrl+C | Close LeadOps browser tabs, or start it with `--timeout-graceful-shutdown 2`. |

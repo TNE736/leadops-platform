@@ -6,7 +6,7 @@ WSL networking at all: each Windows connection is piped through `wsl.exe` to a
 tiny Python bridge inside WSL that talks to mongod on WSL's 127.0.0.1:27017.
 
 Run on Windows and leave it open (Ctrl+C stops it):
-    python scripts\\wsl_mongo_relay.py
+    python backend\\scripts\\wsl_mongo_relay.py
 """
 
 from __future__ import annotations

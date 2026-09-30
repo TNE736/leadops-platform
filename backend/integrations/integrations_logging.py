@@ -228,7 +228,7 @@ def configure_logging() -> None:
         raise SystemExit(
             f"{sys.executable} does not have this app's packages (missing {error.name}). "
             "Start it with .\\scripts\\start-dev.ps1 from the repo root, "
-            "or here: ..\\..\\.venv\\Scripts\\python -m uvicorn main:app --port 8000"
+            "or here: ..\\.venv\\Scripts\\python -m uvicorn main:app --port 8000"
         ) from error
 
     provider = TracerProvider(

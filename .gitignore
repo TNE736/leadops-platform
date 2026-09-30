@@ -4,7 +4,9 @@ out
 .env
 .env.local
 *.log
-logs/
+# Log output only: an unanchored logs/ would also hide frontend/app/api/logs/ (the route).
+/frontend/logs/
+/backend/integrations/logs/
 .DS_Store
 *.tsbuildinfo
 
@@ -18,5 +20,6 @@ _to_delete/
 
 # Python build artifacts
 *.egg-info/
+build/
 Claude outputs/
 test-data/
