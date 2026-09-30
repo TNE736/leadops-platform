@@ -1,6 +1,22 @@
 'use client';
 
 import { useId, useMemo, useState } from 'react';
+import { useCountUp } from '@/hooks/useCountUp';
+
+/**
+ * SVG path data for a line through the points ("Mx,y Lx,y …", one decimal place) and the same
+ * line closed down to `baseY` as a fillable area. Empty strings for fewer than two points.
+ */
+export function linePaths(points: ReadonlyArray<readonly [number, number]>, baseY: number) {
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (!first || !last || points.length < 2) return { line: '', area: '' };
+  const line = points
+    .map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`)
+    .join(' ');
+  const base = baseY.toFixed(1);
+  return { line, area: `${line} L${last[0].toFixed(1)},${base} L${first[0].toFixed(1)},${base} Z` };
+}
 
 interface AreaChartProps {
   /** One measure over time, oldest → newest. */
@@ -8,7 +24,7 @@ interface AreaChartProps {
   /** Seconds each bucket covers, used to label the tooltip. */
   bucketSeconds?: number;
   /** Single hue — this is a magnitude encoding, not a categorical one. */
-  color?: string;
+  color: string;
   height?: number;
   label?: string;
 }
@@ -16,17 +32,13 @@ interface AreaChartProps {
 const PAD = { top: 10, right: 4, bottom: 20, left: 30 };
 
 /**
- * Throughput over time.
- *
- * One series, so one hue and no legend — the panel title names it. The gradient
- * fill is decoration under a single line, not a second encoding. Hovering snaps
- * a crosshair to the nearest bucket and reports its exact value, so the chart
- * never has to label every point.
+ * Throughput over time. One series, so one hue and no legend; the panel title names it.
+ * Hovering snaps a crosshair to the nearest bucket and reports its exact value.
  */
 export function AreaChart({
   data,
   bucketSeconds = 10,
-  color = '#7C3AED',
+  color,
   height = 190,
   label = 'events',
 }: AreaChartProps) {
@@ -42,16 +54,13 @@ export function AreaChart({
   // Round the axis top to something readable rather than the raw max.
   const axisTop = max <= 4 ? 4 : Math.ceil(max / 4) * 4;
 
-  const { linePath, areaPath, points } = useMemo(() => {
-    if (data.length < 2) return { linePath: '', areaPath: '', points: [] as Array<[number, number]> };
-    const step = plotW / (data.length - 1);
+  const { line, area, points } = useMemo(() => {
+    const step = plotW / Math.max(1, data.length - 1);
     const pts: Array<[number, number]> = data.map((v, i) => [
       PAD.left + i * step,
       PAD.top + plotH - (v / axisTop) * plotH,
     ]);
-    const line = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-    const area = `${line} L${pts[pts.length - 1]![0].toFixed(1)},${(PAD.top + plotH).toFixed(1)} L${pts[0]![0].toFixed(1)},${(PAD.top + plotH).toFixed(1)} Z`;
-    return { linePath: line, areaPath: area, points: pts };
+    return { ...linePaths(pts, PAD.top + plotH), points: data.length < 2 ? [] : pts };
   }, [data, plotW, plotH, axisTop]);
 
   const ticks = [0, axisTop / 2, axisTop];
@@ -101,10 +110,10 @@ export function AreaChart({
           );
         })}
 
-        {areaPath && <path d={areaPath} fill={`url(#${gradId})`} />}
-        {linePath && (
+        {area && <path d={area} fill={`url(#${gradId})`} />}
+        {line && (
           <path
-            d={linePath}
+            d={line}
             fill="none"
             stroke={color}
             strokeWidth="2.5"
@@ -158,6 +167,75 @@ export function AreaChart({
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * A meter, not a pie: one proportion of one whole, so the arc carries the value and the number
+ * in the middle states it exactly. No slices, no legend.
+ */
+export function RadialMeter({
+  value,
+  max,
+  label,
+  sublabel,
+  color,
+  size = 168,
+}: {
+  value: number;
+  max: number;
+  label: string;
+  sublabel?: string;
+  color: string;
+  size?: number;
+}) {
+  const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
+  const shown = useCountUp(pct, 900);
+
+  const stroke = 12;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const dash = (shown / 100) * c;
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg
+          width={size}
+          height={size}
+          className="-rotate-90"
+          role="img"
+          aria-label={`${label}: ${pct}%`}
+        >
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke="#E2E8F0"
+            strokeWidth={stroke}
+          />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke={color}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={`${dash} ${c}`}
+            style={{ filter: `drop-shadow(0 0 8px ${color}66)` }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-4xl font-semibold tabular-nums text-ink">{shown}%</span>
+          <span className="mt-0.5 text-2xs uppercase tracking-[0.14em] text-ink-faint">
+            {label}
+          </span>
+        </div>
+      </div>
+      {sublabel && <p className="mt-3 text-center text-xs text-ink-muted">{sublabel}</p>}
     </div>
   );
 }

@@ -8,18 +8,10 @@
   color-scheme: light;
 
   /* Per-segment heading typefaces, loaded via the Google Fonts <link> in
-     app/layout.tsx. Each falls back to a same-category system font so a
-     heading never breaks if the stylesheet hasn't loaded yet. */
-  --font-home: 'Fraunces', Georgia, 'Times New Roman', serif;
+     app/layout.tsx. Each falls back to a system font of the same category. */
   --font-dashboard: 'Space Grotesk', var(--font-sans);
-  --font-analytics: 'Manrope', var(--font-sans);
   --font-upload: 'Outfit', var(--font-sans);
   --font-journey: 'Plus Jakarta Sans', var(--font-sans);
-  --font-timeline: 'IBM Plex Mono', var(--font-mono);
-  --font-voice: 'Urbanist', var(--font-sans);
-  --font-traces: 'JetBrains Mono', var(--font-mono);
-  --font-integrations: 'Sora', var(--font-sans);
-  --font-alerts: 'Syne', var(--font-sans);
 }
 
 html,

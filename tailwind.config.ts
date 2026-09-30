@@ -1,4 +1,5 @@
 import type { Config } from 'tailwindcss';
+import { ACCENT, BRAND_INK } from './lib/theme';
 
 /**
  * LeadOps design tokens — light theme.
@@ -46,19 +47,12 @@ const config: Config = {
           faint: '#94A3B8',
         },
         // ---- Module accents: identity, never state. Same indigo / violet /
-        // fuchsia family as the Home hero, plus emerald/amber/rose kept for
-        // semantic meaning (success/warning/error) elsewhere in the app. ----
-        accent: {
-          violet: '#7C3AED',
-          indigo: '#4338CA',
-          fuchsia: '#C026D3',
-          emerald: '#059669',
-          amber: '#B45309',
-          rose: '#E11D48',
-        },
+        // fuchsia family as the Home hero, plus emerald/amber/rose/red kept for
+        // semantic meaning elsewhere in the app. Values live in lib/theme.ts. ----
+        accent: ACCENT,
         brand: {
-          DEFAULT: '#7C3AED',
-          ink: '#5B21B6',
+          DEFAULT: ACCENT.violet,
+          ink: BRAND_INK,
         },
         // ---- Status: reserved, label-paired ----
         status: {
@@ -78,16 +72,9 @@ const config: Config = {
         // Each area of the app owns a distinct display face, the same way it
         // owns an accent hue, so a screenshot of just the heading tells you
         // which part of the product you're looking at.
-        home: ['var(--font-home)', 'Georgia', 'serif'],
         dashboard: ['var(--font-dashboard)', 'sans-serif'],
-        analytics: ['var(--font-analytics)', 'sans-serif'],
         upload: ['var(--font-upload)', 'sans-serif'],
         journey: ['var(--font-journey)', 'sans-serif'],
-        timeline: ['var(--font-timeline)', 'ui-monospace', 'monospace'],
-        voice: ['var(--font-voice)', 'sans-serif'],
-        traces: ['var(--font-traces)', 'ui-monospace', 'monospace'],
-        integrations: ['var(--font-integrations)', 'sans-serif'],
-        alerts: ['var(--font-alerts)', 'sans-serif'],
       },
       fontSize: {
         '2xs': ['0.75rem', { lineHeight: '1.0625rem' }],
@@ -114,11 +101,7 @@ const config: Config = {
         pulseDot: 'pulseDot 2.2s ease-in-out infinite',
         rise: 'rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both',
         slideIn: 'slideIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both',
-        packet: 'packet 2.8s linear infinite',
-        drawIn: 'drawIn 1.1s ease-out both',
         floatUp: 'floatUp 2.8s ease-in-out infinite',
-        ringPulse: 'ringPulse 2.4s cubic-bezier(0.3, 0.6, 0.4, 1) infinite',
-        wave: 'wave 1s ease-in-out infinite',
         // ---- Home hero: sequential pipeline reveal + ambient background ----
         popIn: 'popIn 6.4s ease infinite',
         growIn: 'growIn 6.4s ease infinite',
@@ -141,29 +124,11 @@ const config: Config = {
           from: { opacity: '0', transform: 'translateY(-8px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
         },
-        packet: {
-          '0%': { left: '-6%', opacity: '0' },
-          '12%': { opacity: '1' },
-          '88%': { opacity: '1' },
-          '100%': { left: '104%', opacity: '0' },
-        },
-        drawIn: {
-          from: { strokeDashoffset: '1000' },
-          to: { strokeDashoffset: '0' },
-        },
         floatUp: {
           '0%': { transform: 'translateY(10px) scale(0.8)', opacity: '0' },
           '18%': { opacity: '1' },
           '78%': { opacity: '1' },
           '100%': { transform: 'translateY(-42px) scale(1)', opacity: '0' },
-        },
-        ringPulse: {
-          '0%': { transform: 'scale(0.75)', opacity: '0.6' },
-          '100%': { transform: 'scale(1.8)', opacity: '0' },
-        },
-        wave: {
-          '0%, 100%': { transform: 'scaleY(0.32)' },
-          '50%': { transform: 'scaleY(1)' },
         },
         popIn: {
           '0%': { opacity: '0', transform: 'scale(0.4) translateY(10px)' },

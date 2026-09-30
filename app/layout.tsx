@@ -1,15 +1,14 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import { AGUIProvider } from '@/lib/ag-ui/provider';
+import { AGUIProvider } from '@/lib/ag-ui';
 
 export const metadata: Metadata = {
   title: 'LeadOps — Mission Control',
-  description:
-    'From CSV to MongoDB and the outreach agents — real-time pipeline observability.',
+  description: 'From CSV to MongoDB and the outreach agents — real-time pipeline observability.',
 };
 
 /**
- * One Google Fonts request for every per-segment heading typeface (see the
+ * One Google Fonts request for the per-segment heading typefaces (see the
  * `--font-*` variables in globals.css and the matching `font-*` utilities in
  * tailwind.config.ts). Loaded as a stylesheet link rather than through
  * `next/font/google` so it degrades gracefully — the browser just falls back
@@ -19,16 +18,9 @@ export const metadata: Metadata = {
 const GOOGLE_FONTS_HREF =
   'https://fonts.googleapis.com/css2?' +
   [
-    'family=Fraunces:ital,wght@0,500;0,600;1,500;1,600',
     'family=Space+Grotesk:wght@500;600;700',
-    'family=Manrope:wght@600;700',
     'family=Outfit:wght@500;600',
     'family=Plus+Jakarta+Sans:wght@600;700',
-    'family=IBM+Plex+Mono:wght@500;600',
-    'family=Urbanist:wght@600;700',
-    'family=JetBrains+Mono:wght@500;600',
-    'family=Sora:wght@600;700',
-    'family=Syne:wght@700;800',
   ].join('&') +
   '&display=swap';
 

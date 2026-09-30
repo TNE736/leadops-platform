@@ -1,11 +1,9 @@
-import { TopNav } from '@/components/layout/TopNav';
+import { TopNav } from '@/components/shell';
 
 /**
- * Chrome for the operational app (dashboard, analytics, upload, etc.) — a
- * sticky top nav with a two-level "drill down" (category pills, then that
- * category's own pages) instead of a fixed sidebar. The Home page at `/`
- * sits outside this route group on purpose: it's a standalone landing page
- * with its own header, so it doesn't inherit this layout.
+ * Shell for the operational pages (dashboard, upload, lead journey): the
+ * sticky TopNav plus a centred main column. The Home page at `/` sits outside
+ * this route group on purpose; it is a standalone landing page with its own header.
  */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
